@@ -1,0 +1,1107 @@
+%code requires {
+    #include "tree.hpp"
+    #include <vector>
+    #include <string>
+    #include "error_handler.hpp"
+    
+    class Statement;
+    class Expression;
+    class Node; 
+    extern Node* root; 
+
+    // Estructura para ElifList (vector of pairs: condition, then-expression)
+    typedef std::vector<std::pair<Expression*, Expression*>> ElifListType;
+
+    // Helper structure for if_expr's else part
+    struct ElsePartInfo {
+        ElifListType* elifs; // Can be nullptr if no elifs
+        Expression* else_expr;   // Can be nullptr if no else
+        bool has_else_keyword; // True if ELSE keyword was present
+
+        ElsePartInfo(ElifListType* efs, Expression* ee, bool hek) : elifs(efs), else_expr(ee), has_else_keyword(hek) {}
+    };
+}
+
+// Enable location tracking
+%locations
+%define parse.error verbose
+
+%{
+#include <cstdio>
+#include <cstdlib>
+#include "tree.hpp"
+#include <vector>
+#include <string>
+#include "error_handler.hpp"
+
+extern char* yytext;
+extern int yylex();
+extern int yylineno;
+extern int yycolumn;
+
+Node* root = nullptr; 
+
+
+// Improved error reporting
+void yyerror(const char *s) {
+    SourceLocation loc(yylineno, yycolumn);
+    SYNTAX_ERROR(std::string(s) + " cerca de '" + yytext + "'", loc);
+}
+%}
+
+%union {
+    int ival;
+    double dval;
+    char* sval;
+    Statement* stmt;
+    Expression* expr;
+    std::vector<Statement*>* stmt_list;
+    std::vector<std::pair<std::string, Expression*>>* binding_list_type; // For let bindings (legacy)
+    std::vector<LetBinding>* typed_binding_list_type; // For typed let bindings
+    std::vector<Expression*>* expr_list;
+    std::vector<std::string>* param_list;
+    ElifListType* elif_list_type; // For non-empty elif lists
+    BlockExpression* blocks; // Assuming BlockExpression* is meant, not BlockStatement
+    Program* program_node; // Changed from Program* program to avoid conflict if Program is a type name
+    ElsePartInfo* else_part_info_type; // For if_expr's else part
+    TypeDefinition* type_def;
+    std::vector<TypeDefinition*>* type_list;
+    std::vector<std::pair<std::string, Expression*>>* field_list;
+    std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>* method_list;
+    std::pair<std::string, Expression*>* field_def;
+    std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>* method_def;
+    std::string* type_annotation;
+    std::pair<std::string, std::string>* typed_param;
+    std::vector<std::pair<std::string, std::string>>* typed_param_list;
+    std::pair<std::string, std::string>* typed_binding;
+    std::vector<std::pair<std::string, std::string>>* typed_binding_list;
+    Node* node; // For program_item
+    std::vector<Node*>* node_list; // For program_items
+    }
+
+// Tokens
+%token <dval> NUMBER
+%token <sval> ID STRING
+%token LET IN PRINT FUNCTION /* FOR removed, see below */
+%token IF ELSE ELIF WHILE FOR // FOR is here
+%token CONCAT CONCAT_WS ARROW "=>"
+%token EQ NEQ LE GE AND OR
+%token ASSIGN
+%token TYPE INHERITS NEW SELF BASE IS AS
+%token '{' '}' '.' '[' ']' '|' ':'
+
+// Precedencias y asociatividades
+// Bison reads precedence from top to bottom.
+// Operators on later lines or further to the right on the same line have higher precedence.
+// Therefore, operators with *lower* precedence should appear *earlier* in this list.
+
+// Special non-associative markers for grammar constructs.
+// Their placement helps resolve specific shift/reduce conflicts, often related to if-else or similar constructs.
+%nonassoc LET_IN_PREC
+%nonassoc IF_PREC
+%nonassoc ELSE
+
+// Assignment operator: should have low precedence and typically be right-associative.
+%right ASSIGN          // Corrected: Lower precedence and right-associative
+
+// Logical operators
+%left OR
+%left AND
+
+// Comparison operators: non-associative is common to prevent chaining like a < b < c without explicit grouping.
+%nonassoc EQ NEQ '<' '>' LE GE IS AS
+
+// Concatenation operator
+%left CONCAT CONCAT_WS
+
+// Arithmetic operators:
+// '+' and '-' are left-associative.
+%left '+' '-'
+
+// '*' '/' '%' are left-associative and have higher precedence than '+', '-'.
+%left '*' '/' '%'
+
+// '^' (exponentiation) has higher precedence than multiply/divide
+// and is right-associative (standard for exponentiation)
+%right '^'
+
+// Member access has higher precedence than arithmetic
+%left '.'
+
+// Vector indexing has higher precedence than member access
+%left '[' ']'
+
+// Tokens/keywords that might need precedence for specific parsing situations,
+// e.g., to distinguish a function declaration keyword from an identifier.
+%nonassoc FUNCTION_PREC // For the FUNCTION keyword in function declarations
+%nonassoc ID            // For identifiers, often treated as primary expressions.
+                        // Can help resolve shift/reduce if ID can be followed by operators or '('.
+
+
+// Tipos de retorno
+%type <stmt> statement function_declaration while_statement expression_statement
+%type <expr> expression while_expr let_in_expr if_expr block_expr for_loop_expr print_expr
+%type <stmt_list> statement_list function_list block_stmt_body
+%type <binding_list_type> binding_list
+%type <typed_binding_list_type> typed_binding_list_new
+%type <expr_list> expr_list
+%type <param_list> param_list
+%type <elif_list_type> elif_list_non_empty
+%type <else_part_info_type> opt_else_part
+%type <type_def> type_definition
+%type <type_list> type_list
+%type <field_list> member_list
+%type <type_annotation> opt_type_annotation
+%type <typed_param> typed_param
+%type <typed_param_list> typed_param_list
+%type <node> program_item
+%type <node_list> program_items
+// Removed %type <program_node> program; as program rule does not set $
+
+%%
+
+program
+    : program_items {
+        // Separate types, functions, and statements from the mixed list
+        std::vector<TypeDefinition*> types;
+        std::vector<FunctionDeclaration*> funcs;
+        std::vector<Statement*> stmts;
+        
+        for (auto* item : *$1) {
+            if (auto* type_def = dynamic_cast<TypeDefinition*>(item)) {
+                types.push_back(type_def);
+            } else if (auto* func_decl = dynamic_cast<FunctionDeclaration*>(item)) {
+                funcs.push_back(func_decl);
+            } else if (auto* stmt = dynamic_cast<Statement*>(item)) {
+                stmts.push_back(stmt);
+            }
+        }
+        
+        root = new Program(SourceLocation(yylineno, @1.first_column), types, funcs, stmts);
+        delete $1; // Delete the vector shell
+    }
+    | /* empty */ {
+        root = new Program(SourceLocation(yylineno, 1), {}, {}, {});
+    }
+    ;
+
+program_items
+    : program_item { 
+        $$ = new std::vector<Node*>(); 
+        $$->push_back($1); 
+    }
+    | program_items program_item { 
+        $$ = $1; 
+        $$->push_back($2); 
+    }
+    ;
+
+program_item
+    : type_definition { $$ = $1; }
+    | function_declaration { $$ = $1; }
+    | statement { $$ = $1; }
+    ;
+
+type_list
+    : type_definition { $$ = new std::vector<TypeDefinition*>(); $$->push_back($1); }
+    | type_list type_definition { $$ = $1; $$->push_back($2); }
+    ;
+
+type_definition
+    : TYPE ID '{' member_list '}' {
+        // Type without parameters
+        
+        // Separate fields and methods from the unified member_list
+        auto fields = new std::vector<std::pair<std::string, Expression*>>();
+        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        
+        for (const auto& member : *$4) {
+            if (member.first.find("(") != std::string::npos) {
+                // It's a method - parse the signature
+                size_t paren_pos = member.first.find("(");
+                std::string method_name = member.first.substr(0, paren_pos);
+                
+                // Extract parameters from the stored signature
+                std::vector<std::string> params;
+                size_t start = paren_pos + 1;
+                size_t end = member.first.find(")", start);
+                if (start < end) {
+                    std::string param_str = member.first.substr(start, end - start);
+                    // Simple parameter parsing - split by comma
+                    size_t pos = 0;
+                    while (pos < param_str.length()) {
+                        size_t comma = param_str.find(",", pos);
+                        if (comma == std::string::npos) comma = param_str.length();
+                        std::string param = param_str.substr(pos, comma - pos);
+                        // Trim whitespace
+                        param.erase(0, param.find_first_not_of(" \t"));
+                        param.erase(param.find_last_not_of(" \t") + 1);
+                        if (!param.empty()) params.push_back(param);
+                        pos = comma + 1;
+                    }
+                }
+                
+                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+            } else {
+                // It's a field
+                fields->push_back(member);
+            }
+        }
+        
+        $$ = new TypeDefinition(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            std::vector<std::string>(), // empty parameter list
+            *fields,
+            *methods
+        );
+        free($2);
+        delete $4;
+        delete fields;
+        delete methods;
+    }
+    | TYPE ID '(' typed_param_list ')' '{' member_list '}' {
+        // Type with parameters
+        
+        // Separate fields and methods from the unified member_list
+        auto fields = new std::vector<std::pair<std::string, Expression*>>();
+        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        
+        for (const auto& member : *$7) {
+            if (member.first.find("(") != std::string::npos) {
+                // It's a method - parse the signature
+                size_t paren_pos = member.first.find("(");
+                std::string method_name = member.first.substr(0, paren_pos);
+                
+                // Extract parameters from the stored signature
+                std::vector<std::string> params;
+                size_t start = paren_pos + 1;
+                size_t end = member.first.find(")", start);
+                if (start < end) {
+                    std::string param_str = member.first.substr(start, end - start);
+                    // Simple parameter parsing - split by comma
+                    size_t pos = 0;
+                    while (pos < param_str.length()) {
+                        size_t comma = param_str.find(",", pos);
+                        if (comma == std::string::npos) comma = param_str.length();
+                        std::string param = param_str.substr(pos, comma - pos);
+                        // Trim whitespace
+                        param.erase(0, param.find_first_not_of(" \t"));
+                        param.erase(param.find_last_not_of(" \t") + 1);
+                        if (!param.empty()) params.push_back(param);
+                        pos = comma + 1;
+                    }
+                }
+                
+                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+            } else {
+                // It's a field
+                fields->push_back(member);
+            }
+        }
+        
+        // Convert typed parameters to simple parameter list for now
+        std::vector<std::string> params;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+        }
+        
+        $$ = new TypeDefinition(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            *fields,
+            *methods
+        );
+        free($2);
+        delete $4;
+        delete $7;
+        delete fields;
+        delete methods;
+    }
+    | TYPE ID INHERITS ID '{' member_list '}' {
+        // Type with inheritance but no parameters and no parent arguments
+        auto fields = new std::vector<std::pair<std::string, Expression*>>();
+        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        
+        for (const auto& member : *$6) {
+            if (member.first.find("(") != std::string::npos) {
+                size_t paren_pos = member.first.find("(");
+                std::string method_name = member.first.substr(0, paren_pos);
+                
+                std::vector<std::string> params;
+                size_t start = paren_pos + 1;
+                size_t end = member.first.find(")", start);
+                if (start < end) {
+                    std::string param_str = member.first.substr(start, end - start);
+                    size_t pos = 0;
+                    while (pos < param_str.length()) {
+                        size_t comma = param_str.find(",", pos);
+                        if (comma == std::string::npos) comma = param_str.length();
+                        std::string param = param_str.substr(pos, comma - pos);
+                        param.erase(0, param.find_first_not_of(" \t"));
+                        param.erase(param.find_last_not_of(" \t") + 1);
+                        if (!param.empty()) params.push_back(param);
+                        pos = comma + 1;
+                    }
+                }
+                
+                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+            } else {
+                fields->push_back(member);
+            }
+        }
+        
+        $$ = new TypeDefinition(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            std::vector<std::string>(), // empty parameter list
+            *fields,
+            *methods,
+            $4  // parent type
+        );
+        free($2);
+        free($4);
+        delete $6;
+        delete fields;
+        delete methods;
+    }
+    | TYPE ID INHERITS ID '(' expr_list ')' '{' member_list '}' {
+        // Type with inheritance, no parameters but with parent arguments
+        auto fields = new std::vector<std::pair<std::string, Expression*>>();
+        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        
+        for (const auto& member : *$9) {
+            if (member.first.find("(") != std::string::npos) {
+                size_t paren_pos = member.first.find("(");
+                std::string method_name = member.first.substr(0, paren_pos);
+                
+                std::vector<std::string> params;
+                size_t start = paren_pos + 1;
+                size_t end = member.first.find(")", start);
+                if (start < end) {
+                    std::string param_str = member.first.substr(start, end - start);
+                    // Simple parameter parsing - split by comma
+                    size_t pos = 0;
+                    while (pos < param_str.length()) {
+                        size_t comma = param_str.find(",", pos);
+                        if (comma == std::string::npos) comma = param_str.length();
+                        std::string param = param_str.substr(pos, comma - pos);
+                        // Trim whitespace
+                        param.erase(0, param.find_first_not_of(" \t"));
+                        param.erase(param.find_last_not_of(" \t") + 1);
+                        if (!param.empty()) params.push_back(param);
+                        pos = comma + 1;
+                    }
+                }
+                
+                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+            } else {
+                fields->push_back(member);
+            }
+        }
+        
+        $$ = new TypeDefinition(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            std::vector<std::string>(), // empty parameter list
+            *fields,
+            *methods,
+            $4,  // parent type
+            *$6  // parent arguments
+        );
+        free($2);
+        free($4);
+        delete $6;
+        delete $9;
+        delete fields;
+        delete methods;
+    }
+    | TYPE ID '(' typed_param_list ')' INHERITS ID '{' member_list '}' {
+        // Type with inheritance but no parent arguments
+        auto fields = new std::vector<std::pair<std::string, Expression*>>();
+        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        
+        for (const auto& member : *$9) {
+            if (member.first.find("(") != std::string::npos) {
+                size_t paren_pos = member.first.find("(");
+                std::string method_name = member.first.substr(0, paren_pos);
+                
+                std::vector<std::string> params;
+                size_t start = paren_pos + 1;
+                size_t end = member.first.find(")", start);
+                if (start < end) {
+                    std::string param_str = member.first.substr(start, end - start);
+                    size_t pos = 0;
+                    while (pos < param_str.length()) {
+                        size_t comma = param_str.find(",", pos);
+                        if (comma == std::string::npos) comma = param_str.length();
+                        std::string param = param_str.substr(pos, comma - pos);
+                        param.erase(0, param.find_first_not_of(" \t"));
+                        param.erase(param.find_last_not_of(" \t") + 1);
+                        if (!param.empty()) params.push_back(param);
+                        pos = comma + 1;
+                    }
+                }
+                
+                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+            } else {
+                fields->push_back(member);
+            }
+        }
+        
+        // Convert typed parameters to simple parameter list for now
+        std::vector<std::string> params;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+        }
+        
+        $$ = new TypeDefinition(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            *fields,
+            *methods,
+            $7  // parent type
+        );
+        free($2);
+        free($7);
+        delete $4;
+        delete $9;
+        delete fields;
+        delete methods;
+    }
+    | TYPE ID '(' typed_param_list ')' INHERITS ID '(' expr_list ')' '{' member_list '}' {
+        // Type with inheritance and parent arguments
+        auto fields = new std::vector<std::pair<std::string, Expression*>>();
+        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        
+        for (const auto& member : *$12) {
+            if (member.first.find("(") != std::string::npos) {
+                size_t paren_pos = member.first.find("(");
+                std::string method_name = member.first.substr(0, paren_pos);
+                
+                std::vector<std::string> params;
+                size_t start = paren_pos + 1;
+                size_t end = member.first.find(")", start);
+                if (start < end) {
+                    std::string param_str = member.first.substr(start, end - start);
+                    size_t pos = 0;
+                    while (pos < param_str.length()) {
+                        size_t comma = param_str.find(",", pos);
+                        if (comma == std::string::npos) comma = param_str.length();
+                        std::string param = param_str.substr(pos, comma - pos);
+                        param.erase(0, param.find_first_not_of(" \t"));
+                        param.erase(param.find_last_not_of(" \t") + 1);
+                        if (!param.empty()) params.push_back(param);
+                        pos = comma + 1;
+                    }
+                }
+                
+                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+            } else {
+                fields->push_back(member);
+            }
+        }
+        
+        // Convert typed parameters to simple parameter list for now
+        std::vector<std::string> params;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+        }
+        
+        $$ = new TypeDefinition(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            *fields,
+            *methods,
+            $7,  // parent type
+            *$9  // parent arguments
+        );
+        free($2);
+        free($7);
+        delete $4;
+        delete $9;
+        delete $12;
+        delete fields;
+        delete methods;
+    }
+    ;
+
+member_list
+    : /* empty */ { $$ = new std::vector<std::pair<std::string, Expression*>>(); }
+    | member_list ID ASSIGN expression ';' {
+        $$ = $1;
+        $$->push_back(std::make_pair($2, $4));
+        free($2);
+    }
+    | member_list ID ':' ID ASSIGN expression ';' {
+        $$ = $1;
+        // For typed fields, we store the field name with type annotation
+        std::string fieldWithType = std::string($2) + ":" + std::string($4);
+        $$->push_back(std::make_pair(fieldWithType, $6));
+        free($2);
+        free($4);
+    }
+    | member_list ID '(' param_list ')' ARROW expression ';' {
+        $$ = $1;
+        // Store method with its signature for later parsing
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i];
+        }
+        signature += ")";
+        $$->push_back(std::make_pair(signature, $7));
+        free($2);
+        delete $4;
+    }
+    | member_list ID '(' param_list ')' ':' ID ARROW expression ';' {
+        $$ = $1;
+        // Store method with return type annotation
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i];
+        }
+        signature += "):" + std::string($7);
+        $$->push_back(std::make_pair(signature, $9));
+        free($2);
+        free($7);
+        delete $4;
+    }
+    | member_list ID '(' typed_param_list ')' ARROW expression ';' {
+        $$ = $1;
+        // Store method with typed parameters
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i].first;
+            if (!(*$4)[i].second.empty()) {
+                signature += ":" + (*$4)[i].second;
+            }
+        }
+        signature += ")";
+        $$->push_back(std::make_pair(signature, $7));
+        free($2);
+        delete $4;
+    }
+    | member_list ID '(' typed_param_list ')' ':' ID ARROW expression ';' {
+        $$ = $1;
+        // Store method with typed parameters and return type
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i].first;
+            if (!(*$4)[i].second.empty()) {
+                signature += ":" + (*$4)[i].second;
+            }
+        }
+        signature += "):" + std::string($7);
+        $$->push_back(std::make_pair(signature, $9));
+        free($2);
+        free($7);
+        delete $4;
+    }
+    ;
+
+function_list
+    : function_declaration { $$ = new std::vector<Statement*>(); $$->push_back($1); }
+    | function_list function_declaration { $$ = $1; $$->push_back($2); }
+    ;
+
+function_declaration
+    : FUNCTION ID '(' typed_param_list ')' ARROW expression ';' %prec FUNCTION_PREC {
+        std::vector<Statement*> statements;
+        statements.push_back(new ReturnStatement(SourceLocation(yylineno, @7.first_column), $7)); // loc for expression $7
+        
+        // Extract parameter names and types
+        std::vector<std::string> params;
+        std::vector<std::string> paramTypes;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+            paramTypes.push_back(param.second.empty() ? "Number" : param.second);
+        }
+        
+        $$ = new FunctionDeclaration(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            paramTypes,
+            "Number", // Default return type
+            new BlockStatement(SourceLocation(yylineno, @6.first_column), statements) // loc for ARROW
+        );
+        free($2);
+        delete $4;
+    }
+    | FUNCTION ID '(' typed_param_list ')' ':' ID ARROW expression ';' %prec FUNCTION_PREC {
+        std::vector<Statement*> statements;
+        statements.push_back(new ReturnStatement(SourceLocation(yylineno, @9.first_column), $9)); // loc for expression $9
+        
+        // Extract parameter names and types
+        std::vector<std::string> params;
+        std::vector<std::string> paramTypes;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+            paramTypes.push_back(param.second.empty() ? "Number" : param.second);
+        }
+        
+        $$ = new FunctionDeclaration(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            paramTypes,
+            $7, // return type annotation
+            new BlockStatement(SourceLocation(yylineno, @8.first_column), statements) // loc for ARROW
+        );
+        free($2);
+        free($7);
+        delete $4;
+    }
+    | FUNCTION ID '(' typed_param_list ')' '{' statement_list '}' %prec FUNCTION_PREC {
+        // Extract parameter names and types
+        std::vector<std::string> params;
+        std::vector<std::string> paramTypes;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+            paramTypes.push_back(param.second.empty() ? "Number" : param.second);
+        }
+        
+        $$ = new FunctionDeclaration(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            paramTypes,
+            "Void", // Block functions return Void by default
+            new BlockStatement(SourceLocation(yylineno, @6.first_column), *$7)
+        );
+        free($2);
+        delete $4;
+        delete $7;
+    }
+    | FUNCTION ID '(' typed_param_list ')' ':' ID '{' statement_list '}' %prec FUNCTION_PREC {
+        // Extract parameter names and types
+        std::vector<std::string> params;
+        std::vector<std::string> paramTypes;
+        for (const auto& param : *$4) {
+            params.push_back(param.first);
+            paramTypes.push_back(param.second.empty() ? "Number" : param.second);
+        }
+        
+        $$ = new FunctionDeclaration(
+            SourceLocation(yylineno, @1.first_column),
+            $2,
+            params,
+            paramTypes,
+            $7, // return type annotation
+            new BlockStatement(SourceLocation(yylineno, @8.first_column), *$9)
+        );
+        free($2);
+        free($7);
+        delete $4;
+        delete $9;
+    }
+    ;
+
+param_list
+    : /* empty */ { $$ = new std::vector<std::string>(); }
+    | ID { $$ = new std::vector<std::string>(); $$->push_back($1); free($1); }
+    | param_list ',' ID { $$ = $1; $$->push_back($3); free($3); }
+    ;
+
+// Type annotation rules
+opt_type_annotation
+    : /* empty */ { $$ = nullptr; }
+    | ':' ID { $$ = new std::string($2); free($2); }
+    ;
+
+typed_param
+    : ID { $$ = new std::pair<std::string, std::string>($1, ""); free($1); }
+    | ID ':' ID { $$ = new std::pair<std::string, std::string>($1, $3); free($1); free($3); }
+    ;
+
+typed_param_list
+    : /* empty */ { $$ = new std::vector<std::pair<std::string, std::string>>(); }
+    | typed_param { $$ = new std::vector<std::pair<std::string, std::string>>(); $$->push_back(*$1); delete $1; }
+    | typed_param_list ',' typed_param { $$ = $1; $$->push_back(*$3); delete $3; }
+    ;
+
+block_expr // This produces an Expression*
+    : '{' statement_list '}' {
+        $$ = new BlockExpression(SourceLocation(yylineno, @1.first_column), *$2);
+        delete $2; // Delete the vector shell, contents moved to BlockExpression
+    }
+    ;
+
+// block_stmt is now just the body for clarity, used by function_declaration, while_statement etc.
+// It produces a std::vector<Statement*>*
+block_stmt_body
+    : statement_list { $$ = $1; } // Pass ownership of statement_list
+    | /* empty block */ { $$ = new std::vector<Statement*>(); }
+    ;
+
+statement_list
+    : statement { $$ = new std::vector<Statement*>(); $$->push_back($1); }
+    | statement_list statement { $$ = $1; $$->push_back($2); }
+    ;
+
+statement
+    : ID ASSIGN expression ';' { // Assignment is a statement
+        $$ = new ExpressionStatement(SourceLocation(yylineno, @1.first_column), 
+            new AssignmentExpression(SourceLocation(yylineno, @1.first_column), $1, $3));
+        free($1);
+    }
+    | while_statement
+    | expression_statement
+    ;
+
+// Simplified expression_statement
+expression_statement
+    : expression ';' { // Any expression followed by a semicolon is a statement
+        $$ = new ExpressionStatement(SourceLocation(yylineno, @1.first_column), $1);
+    }
+    ;
+
+while_statement
+    : WHILE '(' expression ')' '{' block_stmt_body '}' {
+        $$ = new WhileStatement(
+            SourceLocation(yylineno, @1.first_column), $3,
+            new BlockStatement(SourceLocation(yylineno, @5.first_column), *$6)
+        );
+        delete $6; // $6 is vector shell, contents moved
+    }
+    ;
+
+// FOR LOOPS: for_loop_expr is the only for construct, it's an expression.
+// To use as a statement, it becomes: for_loop_expr ';' (via expression_statement)
+for_loop_expr
+    : FOR '(' ID IN expression ')' expression { // Body can be any expression
+        SourceLocation forLoc = SourceLocation(yylineno, @1.first_column); 
+        SourceLocation idLoc = SourceLocation(yylineno, @3.first_column);   
+        
+        std::string loopVarName = $3; 
+        free($3);                     
+        std::string iterName = "__iter_" + loopVarName;
+
+        // Create the loop structure:
+        // let __iter_i = range(...) in {
+        //   while (__iter_i.next()) {
+        //     let i = __iter_i.current() in {
+        //       body_expression; // Execute the body expression directly
+        //     }
+        //   }
+        // }
+        
+        // Create the inner let-in that binds the loop variable
+        auto getCurrentExpr = new FunctionCall(idLoc, iterName + ".current", {});
+        
+        // Create the inner let-in with the loop variable and execute the body expression
+        // Ensure the body expression is properly wrapped in a block expression
+        auto bodyExpr = $7;
+        auto letInBody = new BlockExpression(SourceLocation(yylineno, @7.first_column), // loc of $7
+            { new ExpressionStatement(SourceLocation(yylineno, @7.first_column), bodyExpr) });
+        auto letInVar = new LetIn(SourceLocation(yylineno, @7.first_column), // loc of $7
+            { std::make_pair(loopVarName, getCurrentExpr) }, letInBody);
+        
+        // Create the while loop body
+        auto whileBodyStmt = new BlockStatement(SourceLocation(yylineno, @7.first_column), // loc of $7
+            { new ExpressionStatement(SourceLocation(yylineno, @7.first_column), letInVar) }); // loc of $7
+        
+        // Create the while condition (iterator.next())
+        auto getNextExpr = new FunctionCall(forLoc, iterName + ".next", {});
+        auto whileStmt = new WhileStatement(forLoc, getNextExpr, whileBodyStmt);
+        
+        // Create the final block that just executes the while loop
+        auto outerLetBody = new BlockExpression(forLoc, 
+            { whileStmt });
+        
+        // Create the let-in that initializes the iterator
+        $$ = new LetIn(forLoc, { 
+            std::make_pair(iterName, $5) // $5 is the range expression
+        }, outerLetBody);
+    }
+    ;
+
+
+while_expr
+    : WHILE '(' expression ')' block_expr {
+        // Cast $5 to BlockExpression* since block_expr should return BlockExpression*
+        $$ = new WhileExpression(
+            SourceLocation(yylineno, @1.first_column),
+            $3,
+            static_cast<BlockExpression*>($5)
+        );
+    }
+    | WHILE '(' expression ')' LET binding_list IN expression %prec LET_IN_PREC {
+        // Body of LetIn is $8 (expression)
+        auto letInExpr = new LetIn(SourceLocation(yylineno, @5.first_column), *$6, $8);
+        // Body of WhileExpression needs to be a BlockExpression
+        auto letBlock = new BlockExpression(SourceLocation(yylineno, @5.first_column),
+            { new ExpressionStatement(SourceLocation(yylineno, @5.first_column), letInExpr) });
+        $$ = new WhileExpression(
+            SourceLocation(yylineno, @1.first_column),
+            $3,
+            letBlock
+        );
+        delete $6;
+    }
+    ;
+
+expression
+    : ID %prec ID                { $$ = new Variable(SourceLocation(yylineno, @1.first_column), $1); free($1); }
+    | ID '(' expr_list ')' %prec ID { 
+        $$ = new FunctionCall(SourceLocation(yylineno, @1.first_column), $1, *$3); 
+        free($1); delete $3; 
+    }
+    | ID ASSIGN expression       { // Assignment as expression
+        $$ = new AssignmentExpression(SourceLocation(yylineno, @1.first_column), $1, $3);
+        free($1);
+    }
+    | expression '.' ID ASSIGN expression { // Member assignment as expression
+        auto memberAccess = new MemberAccess(SourceLocation(yylineno, @2.first_column), $1, $3);
+        $$ = new AssignmentExpression(SourceLocation(yylineno, @4.first_column), memberAccess, $5);
+        free($3);
+    }
+    | NEW ID '(' expr_list ')'   { // Object instantiation
+        $$ = new NewExpression(SourceLocation(yylineno, @1.first_column), $2, *$4);
+        free($2); delete $4;
+    }
+    | expression '.' ID          { // Member access
+        $$ = new MemberAccess(SourceLocation(yylineno, @2.first_column), $1, $3);
+        free($3);
+    }
+    | expression '.' ID '(' expr_list ')' { $$ = new MethodCall(SourceLocation(yylineno, @2.first_column), $1, $3, *$5); free($3); delete $5; }
+    | expression '[' expression ']' { $$ = new VectorIndexExpression(SourceLocation(yylineno, @2.first_column), $1, $3); }
+    | '[' expr_list ']'          { $$ = new VectorExpression(SourceLocation(yylineno, @1.first_column), *$2); delete $2; }
+    | '[' expression '|' ID IN expression ']' { 
+        // Transform list comprehension [expr | var in iterable] into a proper let-in structure
+        // This creates: let __iter_var = iterable, __result_var = [] in 
+        //   while (__iter_var.next()) {
+        //     let var = __iter_var.current() in
+        //       __result_var.append(expr)
+        //   }
+        //   __result_var
+        
+        SourceLocation loc = SourceLocation(yylineno, @1.first_column);
+        std::string loopVarName = $4;
+        free($4);
+        std::string iterName = "__iter_" + loopVarName;
+        std::string resultVarName = "__result_" + loopVarName;
+        
+        // Create the inner let-in that binds the loop variable
+        auto getCurrentExpr = new FunctionCall(loc, iterName + ".current", {});
+        
+        // Create append operation: __result_var.append(expr)
+        auto resultVar = new Variable(loc, resultVarName);
+        auto appendCall = new MethodCall(loc, resultVar, "append", {$2});
+        auto appendStmt = new ExpressionStatement(loc, appendCall);
+        
+        // Create the inner let-in with the loop variable
+        auto letInBody = new BlockExpression(loc, { appendStmt });
+        auto letInVar = new LetIn(loc, { std::make_pair(loopVarName, getCurrentExpr) }, letInBody);
+        
+        // Create the while loop body
+        auto whileBodyStmt = new BlockStatement(loc, { new ExpressionStatement(loc, letInVar) });
+        
+        // Create the while condition (iterator.next())
+        auto getNextExpr = new FunctionCall(loc, iterName + ".next", {});
+        auto whileStmt = new WhileStatement(loc, getNextExpr, whileBodyStmt);
+        
+        // Create the final block that returns the result
+        auto finalResultVar = new Variable(loc, resultVarName);
+        auto outerLetBody = new BlockExpression(loc, 
+            { whileStmt, new ExpressionStatement(loc, finalResultVar) });
+        
+        // Initialize result variable as empty vector
+        auto emptyVectorInit = new VectorExpression(loc, std::vector<Expression*>());
+        $$ = new LetIn(loc, { 
+            std::make_pair(iterName, $6), // $6 is the iterable expression
+            std::make_pair(resultVarName, emptyVectorInit)
+        }, outerLetBody);
+    }
+    | SELF                       { $$ = new SelfExpression(SourceLocation(yylineno, @1.first_column)); }
+    | BASE '(' expr_list ')'     { $$ = new BaseExpression(SourceLocation(yylineno, @1.first_column), *$3); delete $3; }
+    | let_in_expr
+    | if_expr
+    | print_expr
+    | expression '+' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "+"); }
+    | expression '-' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "-"); }
+    | expression '*' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "*"); }
+    | expression '/' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "/"); }
+    | expression '^' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "^"); }
+    | expression '%' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "%"); }
+    | expression CONCAT expression { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "@"); }
+    | expression CONCAT_WS expression { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "@@"); }
+    | expression EQ expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "=="); }
+    | expression NEQ expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "!="); }
+    | expression '<' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "<"); }
+    | expression '>' expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, ">"); }
+    | expression LE expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "<="); }
+    | expression GE expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, ">="); }
+    | expression AND expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "&&"); }
+    | expression OR expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "||"); }
+    | expression IS ID           { $$ = new IsExpression(SourceLocation(yylineno, @2.first_column), $1, $3); free($3); }
+    | expression AS ID           { $$ = new AsExpression(SourceLocation(yylineno, @2.first_column), $1, $3); free($3); }
+    | NUMBER                     { $$ = new Number(SourceLocation(yylineno, @1.first_column), $1); }
+    | STRING                     { $$ = new StringLiteral(SourceLocation(yylineno, @1.first_column), $1); free($1); }
+    | '(' expression ')'         { $$ = $2; }
+    | block_expr
+    | while_expr
+    | for_loop_expr // Renamed from for_expr
+    ;
+
+// IF Expression structure
+// if_expr : IF '(' condition ')' then_expression opt_else_part
+// opt_else_part handles:
+//   1. No else (lower precedence via %prec IF_PREC)
+//   2. ELSE else_expression (higher precedence via %prec ELSE)
+//   3. ELIF_LIST ELSE else_expression (higher precedence via %prec ELSE)
+if_expr
+    : IF '(' expression ')' expression opt_else_part {
+        SourceLocation ifLoc = SourceLocation(yylineno, @1.first_column);
+        Expression* condExpr = $3;
+        Expression* thenExpr = $5;
+        ElsePartInfo* elseInfo = $6;
+
+        Expression* finalElseBranch = elseInfo->else_expr;
+
+        if (elseInfo->elifs) { // If there are ELIFs
+            // Iterate ELIFs in reverse to build nested IfExpressions for the else chain
+            for (auto it = elseInfo->elifs->rbegin(); it != elseInfo->elifs->rend(); ++it) {
+                // Each ELIF becomes an IfExpression whose "else" is the next ELIF or final ELSE
+                finalElseBranch = new IfExpression(ifLoc, it->first /*elif_cond*/, it->second /*elif_then*/, finalElseBranch);
+            }
+            delete elseInfo->elifs; // Clean up the elif list vector
+        }
+        
+        // If there was no ELSE keyword at all (e.g. IF cond THEN expr), finalElseBranch would be nullptr from opt_else_part.
+        // If there was an ELSE keyword but no ELIFs, finalElseBranch is elseInfo->else_expr.
+        // If there were ELIFs, finalElseBranch is the chain of IfExpressions from ELIFs.
+        $$ = new IfExpression(ifLoc, condExpr, thenExpr, finalElseBranch);
+        delete elseInfo; // Clean up the ElsePartInfo struct
+    }
+    ;
+
+opt_else_part // Returns ElsePartInfo*
+    : %prec IF_PREC { // No ELSE part, IF_PREC gives this lower precedence
+        $$ = new ElsePartInfo(nullptr, nullptr, false);
+    }
+    | ELSE expression %prec ELSE { // Simple ELSE part
+        $$ = new ElsePartInfo(nullptr, $2, true);
+    }
+    | elif_list_non_empty ELSE expression %prec ELSE { // ELIFs then ELSE part
+        $$ = new ElsePartInfo($1, $3, true); // $1 is ElifListType* from elif_list_non_empty
+    }
+    ;
+
+elif_list_non_empty // Produces ElifListType* (must have at least one ELIF)
+    : ELIF '(' expression ')' expression {
+        $$ = new ElifListType();
+        $$->push_back(std::make_pair($3, $5));
+        // Need to capture location of ELIF if IfExpression for ELIF needs it.
+        // For now, pair only stores cond & then. Location can be approximated from main IF.
+    }
+    | elif_list_non_empty ELIF '(' expression ')' expression {
+        $$ = $1;
+        $$->push_back(std::make_pair($4, $6));
+    }
+    ;
+
+// LET expression structure with type annotations
+// let_in_expr : LET typed_binding_list_new IN expression
+typed_binding_list_new // Produces std::vector<LetBinding>*
+    : ID ASSIGN expression { // A single binding without type annotation
+        $$ = new std::vector<LetBinding>();
+        $$->push_back(LetBinding(std::string($1), "", $3));
+        free($1);
+    }
+    | ID ':' ID ASSIGN expression { // A single binding with type annotation
+        $$ = new std::vector<LetBinding>();
+        $$->push_back(LetBinding(std::string($1), std::string($3), $5));
+        free($1);
+        free($3);
+    }
+    | typed_binding_list_new ',' ID ASSIGN expression { // Subsequent bindings without type annotation
+        $$ = $1;
+        $$->push_back(LetBinding(std::string($3), "", $5));
+        free($3);
+    }
+    | typed_binding_list_new ',' ID ':' ID ASSIGN expression { // Subsequent bindings with type annotation
+        $$ = $1;
+        $$->push_back(LetBinding(std::string($3), std::string($5), $7));
+        free($3);
+        free($5);
+    }
+    ;
+
+// Keep the old binding_list for backward compatibility with while_expr
+binding_list // Produces std::vector<std::pair<std::string, Expression*>>*
+    : ID ASSIGN expression { // A single binding without type annotation
+        $$ = new std::vector<std::pair<std::string, Expression*>>();
+        $$->push_back(std::make_pair(std::string($1), $3));
+        free($1);
+    }
+    | ID ':' ID ASSIGN expression { // A single binding with type annotation
+        $$ = new std::vector<std::pair<std::string, Expression*>>();
+        // Store just the variable name, ignore type annotation for now (for backward compatibility)
+        $$->push_back(std::make_pair(std::string($1), $5));
+        free($1);
+        free($3);
+    }
+    | binding_list ',' ID ASSIGN expression { // Subsequent bindings without type annotation
+        $$ = $1;
+        $$->push_back(std::make_pair(std::string($3), $5));
+        free($3);
+    }
+    | binding_list ',' ID ':' ID ASSIGN expression { // Subsequent bindings with type annotation
+        $$ = $1;
+        // Store just the variable name, ignore type annotation for now (for backward compatibility)
+        $$->push_back(std::make_pair(std::string($3), $7));
+        free($3);
+        free($5);
+    }
+    ;
+
+expr_list
+    : /* empty */ { $$ = new std::vector<Expression*>(); } // Allow empty expr_list for calls like f()
+    | expression { $$ = new std::vector<Expression*>(); $$->push_back($1); }
+    | expr_list ',' expression { $$ = $1; $$->push_back($3); }
+    ;
+
+print_expr
+    : PRINT '(' expr_list ')' {
+        if ($3->empty()) { // Check if expr_list is empty
+             SEMANTIC_ERROR("print requiere al menos un argumento", SourceLocation(yylineno, @1.first_column));
+             YYABORT;
+        }
+        // For simplicity, let's assume Print takes a vector of expressions if multiple args are allowed
+        // Or, if Print only takes one arg, ensure $3->size() == 1
+        if ($3->size() > 1) {
+             SEMANTIC_ERROR("print actualmente solo soporta un argumento", SourceLocation(yylineno, @1.first_column));
+             // Decide: YYABORT, or take first, or modify Print node
+        }
+        $$ = new Print(SourceLocation(yylineno, @1.first_column), (*$3)[0]); // Taking first arg
+        
+        // Memory management for expr_list ($3)
+        for (size_t i = 0; i < $3->size(); ++i) {
+            if (i != 0) delete (*$3)[i]; // Delete expressions not taken by Print
+        }
+        delete $3; // Delete the vector shell
+    }
+    ;
+
+let_in_expr
+    : LET typed_binding_list_new IN expression %prec LET_IN_PREC {
+        $$ = new LetIn(SourceLocation(yylineno, @1.first_column), *$2, $4);
+        delete $2; // $2 is typed_binding_list_new (vector shell), contents moved or copied by LetIn
+    }
+    ;
+
+%%
+
+

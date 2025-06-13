@@ -1,2 +1,2 @@
 # Hulk_Compiler
-Implementation of a complier for hulk language 
+Implementation of a compiler for hulk language 
