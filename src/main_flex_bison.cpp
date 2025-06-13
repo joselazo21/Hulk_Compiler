@@ -9,14 +9,14 @@
 #include "error_handler.hpp"
 #include <llvm/IR/LLVMContext.h>
 
-// External declarations from flex/bison
-extern FILE *yyin;
+// External declarations from custom lexer/bison
 extern int yyparse(void);
 extern int yylineno;
 extern int yycolumn;
 extern char* yytext;
 extern Node* root;
 extern void yyerror(const char *s);
+extern void set_input_from_file(FILE* file);
 
 // Global variable for current filename (used by error handler)
 std::string current_filename;
@@ -37,10 +37,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Reset parser state
-    yyin = input_file;
-    yylineno = 1;
-    yycolumn = 1;
+    // Reset parser state and set input
+    set_input_from_file(input_file);
     root = nullptr;
     ErrorHandler::getInstance().reset();
     

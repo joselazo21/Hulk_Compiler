@@ -1,0 +1,84 @@
+
+%{
+#include "SintacticoBison.tab.hpp"
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+%}
+
+%%
+
+# Espacios en blanco y nueva línea 
+"\n"              { /* Reset column counter on newline */ }
+[ \t\r]+          { /* ignorar espacios en blanco */ }
+
+# Operadores de asignación
+":="              { printf("<ASSIGN>\n"); return ASSIGN; }
+"="               { printf("<ASSIGN>\n"); return ASSIGN; }
+
+# Palabras clave
+"let"             { printf("<LET>\n"); return LET; }
+"print"           { printf("<PRINT>\n"); return PRINT; }
+"function"        { printf("<FUNCTION>\n"); return FUNCTION; }
+"if"              { printf("<IF>\n"); return IF; }
+"else"            { printf("<ELSE>\n"); return ELSE; }
+"=>"              { printf("<ARROW>\n"); return ARROW; }
+"elif"            { printf("<ELIF>\n"); return ELIF; }
+"while"           { printf("<WHILE>\n"); return WHILE; }
+"for"             { printf("<FOR>\n"); return FOR; }
+"in"              { printf("<IN>\n"); return IN; }
+"type"            { printf("<TYPE>\n"); return TYPE; }
+"inherits"        { printf("<INHERITS>\n"); return INHERITS; }
+"new"             { printf("<NEW>\n"); return NEW; }
+"self"            { printf("<SELF>\n"); return SELF; }
+"base"            { printf("<BASE>\n"); return BASE; }
+"is"              { printf("<IS>\n"); return IS; }
+"as"              { printf("<AS>\n"); return AS; }
+
+# Operadores de comparación
+":"               { printf("<COLON>\n"); return ':'; }
+"=="              { printf("<EQ>\n"); return EQ; }
+"!="              { printf("<NEQ>\n"); return NEQ; }
+"<="              { printf("<LE>\n"); return LE; }
+">="              { printf("<GE>\n"); return GE; }
+"<"               { printf("<LT>\n"); return '<'; }
+">"               { printf("<GT>\n"); return '>'; }
+"%"               { printf("<MOD>\n"); return '%'; }
+"&&"              { printf("<AND>\n"); return AND; }
+"||"              { printf("<OR>\n"); return OR; }
+
+# Operadores y delimitadores
+","               { printf("<COMMA>\n"); return ','; }
+";"               { printf("<SEMICOLON>\n"); return ';'; }
+"+"               { printf("<PLUS>\n"); return '+'; }
+"-"               { printf("<MINUS>\n"); return '-'; }
+"^"               { printf("<POW>\n"); return '^'; }
+"*"               { printf("<MULT>\n"); return '*'; }
+"/"               { printf("<DIV>\n"); return '/'; }
+"@@"              { printf("<CONCAT_WS>\n"); return CONCAT_WS; }
+"@"               { printf("<CONCAT>\n"); return CONCAT; }
+"("               { printf("<LPAREN>\n"); return '('; }
+")"               { printf("<RPAREN>\n"); return ')'; }
+"{"               { printf("<LBRACE>\n"); return '{'; }
+"}"               { printf("<RBRACE>\n"); return '}'; }
+"."               { printf("<DOT>\n"); return '.'; }
+"["               { printf("<LBRACKET>\n"); return '['; }
+"]"               { printf("<RBRACKET>\n"); return ']'; }
+"|"               { printf("<PIPE>\n"); return '|'; }
+
+# Números y literales
+[0-9]+(\.[0-9]+)? { printf("<NUMBER:%s>\n", yytext); yylval.dval = atof(yytext); return NUMBER; }
+[a-zA-Z_][a-zA-Z_0-9]* { printf("<ID:%s>\n", yytext); yylval.sval = strdup(yytext); return ID; }
+\"([^\\\"]|\\.)*\" { 
+                    char* str = strdup(yytext + 1); // skip first "
+                    str[strlen(str)-1] = '\0'; // remove last "
+                    printf("<STRING:%s>\n", str);
+                    yylval.sval = str;
+                    return STRING; 
+                }
+
+# Caracteres no reconocidos
+.                 { 
+                    printf("Error: Carácter no reconocido '%s' en línea %d, columna %d\n", 
+                           yytext, yylineno, yylloc.first_column);
+                }

@@ -17,17 +17,33 @@ set(CMAKE_BUILD_TYPE Debug)
 
 # Find required packages
 find_package(BISON REQUIRED)
-find_package(FLEX REQUIRED)
+# Note: We no longer use FLEX, we use our custom lexer generator
 
 # Configuración de LLVM
 find_package(LLVM 14.0 REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 
-# Generate Flex and Bison files
+# Build the lexer generator first
+add_executable(lexer_generator src/lexer_generator.cpp)
+target_compile_features(lexer_generator PRIVATE cxx_std_11)
+
+# Generate Bison files
 BISON_TARGET(SintacticoBison src/SintacticoBison.ypp ${CMAKE_BINARY_DIR}/SintacticoBison.tab.cpp
     DEFINES_FILE ${CMAKE_BINARY_DIR}/SintacticoBison.tab.hpp)
-FLEX_TARGET(Lexer src/lexer.lpp ${CMAKE_BINARY_DIR}/lex.yy.cpp)
-ADD_FLEX_BISON_DEPENDENCY(Lexer SintacticoBison)
+
+# Generate custom lexer using our lexer generator
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/custom_lexer.cpp
+    COMMAND lexer_generator ${CMAKE_SOURCE_DIR}/hulk_lexer_def.txt ${CMAKE_BINARY_DIR}/custom_lexer.cpp
+    DEPENDS lexer_generator ${CMAKE_SOURCE_DIR}/hulk_lexer_def.txt
+    COMMENT "Generating custom lexer"
+)
+
+# Create a custom target for the lexer generation
+add_custom_target(GenerateLexer DEPENDS ${CMAKE_BINARY_DIR}/custom_lexer.cpp)
+
+# Make sure the lexer is generated before building the main executable
+add_dependencies(GenerateLexer lexer_generator)
 
 # Incluye directorios como SYSTEM para suprimir warnings
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
@@ -37,11 +53,11 @@ include_directories(
     ${CMAKE_BINARY_DIR}
 )
 
-# Flex/Bison sources
-set(FLEX_BISON_SOURCES
+# Custom Lexer/Bison sources
+set(CUSTOM_LEXER_BISON_SOURCES
     src/main_flex_bison.cpp
     ${BISON_SintacticoBison_OUTPUTS}
-    ${FLEX_Lexer_OUTPUTS}
+    ${CMAKE_BINARY_DIR}/custom_lexer.cpp
     src/code_generator.cpp
     src/print.c
     src/runtime_iter.c
@@ -82,8 +98,11 @@ set(FLEX_BISON_SOURCES
     src/as_expression.cpp
 )
 
-# Flex/Bison executable (MAIN)
-add_executable(main_flex_bison ${FLEX_BISON_SOURCES})
+# Custom Lexer/Bison executable (MAIN)
+add_executable(main_flex_bison ${CUSTOM_LEXER_BISON_SOURCES})
+
+# Make sure the custom lexer is generated before building the main executable
+add_dependencies(main_flex_bison GenerateLexer)
 
 # Configuración de warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

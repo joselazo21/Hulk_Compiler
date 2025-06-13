@@ -103,8 +103,6 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
         return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
     }
     
-    llvm::StructType* objectStructType = llvm::cast<llvm::StructType>(pointedType);
-    
     // For runtime type checking, we need to check if the object has runtime type information
     // We'll implement this by checking if the object has a type ID field as the first field
     
