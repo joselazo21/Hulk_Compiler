@@ -284,6 +284,11 @@ bool Context::isSubtypeOf(const std::string& childType, const std::string& paren
         return true;
     }
     
+    // Special case: all types inherit from Object implicitly
+    if (parentType == "Object") {
+        return true;
+    }
+    
     std::string currentType = childType;
     while (currentType != "Object") {
         std::string parentOfCurrent = getParentType(currentType);

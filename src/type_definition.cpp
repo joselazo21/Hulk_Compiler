@@ -101,12 +101,6 @@ void TypeDefinition::printNode(int depth) {
 }
 
 bool TypeDefinition::Validate(IContext* context) {
-    // Check if trying to inherit from builtin types
-    if (parentType == "Number" || parentType == "String" || parentType == "Boolean") {
-        std::cerr << "Error: Cannot inherit from builtin type " << parentType << std::endl;
-        return false;
-    }
-    
     // Check if parent type exists (unless it's Object)
     if (parentType != "Object") {
         // Check if parent type is registered in context
@@ -114,6 +108,12 @@ bool TypeDefinition::Validate(IContext* context) {
         if (!context->hasType(parentType)) {
             std::cerr << "Error: Parent type '" << parentType << "' of type '" << name 
                       << "' is not defined. Make sure the parent type is declared." << std::endl;
+            return false;
+        }
+        
+        // Check if trying to inherit from builtin types
+        if (parentType == "Number" || parentType == "String" || parentType == "Boolean") {
+            std::cerr << "Error: Cannot inherit from builtin type '" << parentType << "'" << std::endl;
             return false;
         }
     }

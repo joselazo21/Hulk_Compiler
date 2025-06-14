@@ -279,6 +279,13 @@ bool Program::hasCircularInheritanceHelper(const std::string& typeName, IContext
     
     // Check if parent type exists (unless it's Object)
     if (parentType != "Object") {
+        // First check if trying to inherit from builtin types
+        if (parentType == "Number" || parentType == "String" || parentType == "Boolean") {
+            std::cerr << "Error: Cannot inherit from builtin type '" << parentType << "'" << std::endl;
+            visiting.erase(typeName);
+            return true;
+        }
+        
         // Check if parent type is defined
         bool parentExists = false;
         for (auto* t : types) {

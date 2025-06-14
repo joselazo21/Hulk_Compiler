@@ -53,46 +53,42 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
     
     // Handle primitive types first
     if (objectType->isFloatTy()) {
-        // For Number type
-        llvm::Value* result = nullptr;
-        if (typeName == "Number") {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        // For Number type - check if target type is Number or Object
+        if (typeName == "Number" || typeName == "Object") {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
         } else {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
-        return result;
     } else if (objectType->isIntegerTy(1)) {
-        // For Boolean type
-        llvm::Value* result = nullptr;
-        if (typeName == "Boolean") {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        // For Boolean type - check if target type is Boolean or Object
+        if (typeName == "Boolean" || typeName == "Object") {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
         } else {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
-        return result;
     } else if (objectType->isIntegerTy(32)) {
-        // For Integer type (also considered Number in some contexts)
-        llvm::Value* result = nullptr;
-        if (typeName == "Number" || typeName == "Integer") {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        // For Integer type - check if target type is Number, Integer, or Object
+        if (typeName == "Number" || typeName == "Integer" || typeName == "Object") {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
         } else {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
-        return result;
     } else if (objectType->isPointerTy() && objectType->getPointerElementType()->isIntegerTy(8)) {
-        // For String type
-        llvm::Value* result = nullptr;
-        if (typeName == "String") {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        // For String type - check if target type is String or Object
+        if (typeName == "String" || typeName == "Object") {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
         } else {
-            result = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
-        return result;
     }
     
     // Handle object types (pointers to structs)
     if (!objectType->isPointerTy()) {
         // If it's not a pointer, it can't be an object type
+        // But check if target is Object (all types inherit from Object)
+        if (typeName == "Object") {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        }
         return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
     }
     
@@ -100,12 +96,52 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
     llvm::Type* pointedType = objectType->getPointerElementType();
     if (!pointedType->isStructTy()) {
         // If it doesn't point to a struct, it's not an object type
+        // But check if target is Object (all types inherit from Object)
+        if (typeName == "Object") {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        }
         return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
     }
     
-    // For runtime type checking, we need to check if the object has runtime type information
-    // We'll implement this by checking if the object has a type ID field as the first field
+    // For struct types, we need to determine the actual type name and check inheritance
+    // Get the struct type name
+    llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
+    std::string actualTypeName = structType->getName().str();
     
+    // Remove "struct." prefix if present
+    if (actualTypeName.find("struct.") == 0) {
+        actualTypeName = actualTypeName.substr(7);
+    }
+    
+    std::cout << "[DEBUG] IsExpression::codegen - Actual type: " << actualTypeName << ", Target type: " << typeName << std::endl;
+    
+    // Check if the actual type is compatible with the target type using inheritance
+    IContext* currentContext = generator.getContextObject();
+    if (currentContext) {
+        bool isCompatible = false;
+        
+        // Direct type match
+        if (actualTypeName == typeName) {
+            isCompatible = true;
+            std::cout << "[DEBUG] IsExpression::codegen - Direct type match" << std::endl;
+        }
+        // Check inheritance relationship
+        else if (currentContext->isSubtypeOf(actualTypeName, typeName)) {
+            isCompatible = true;
+            std::cout << "[DEBUG] IsExpression::codegen - " << actualTypeName << " is subtype of " << typeName << std::endl;
+        }
+        else {
+            std::cout << "[DEBUG] IsExpression::codegen - No inheritance relationship found" << std::endl;
+        }
+        
+        if (isCompatible) {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
+        } else {
+            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
+        }
+    }
+    
+    // Fallback to runtime type checking if context is not available
     // Create or get the runtime type checking function
     llvm::Function* runtimeTypeCheckFunc = module->getFunction("__hulk_runtime_type_check");
     if (!runtimeTypeCheckFunc) {
