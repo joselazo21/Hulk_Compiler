@@ -136,9 +136,10 @@ bool LetIn::Validate(IContext* context) {
             // Check if it's a new expression
             else if (auto* newExpr = dynamic_cast<NewExpression*>(binding.expr)) {
                 std::string typeName = newExpr->getTypeName();
-                llvm::StructType* structType = letContext->getType(typeName);
-                if (structType) {
-                    actualType = structType->getPointerTo();
+                // Check if the type name is registered in the context (even if struct is nullptr during validation)
+                if (letContext->hasType(typeName)) {
+                    // During validation, we may not have the actual struct type yet, but we know the type exists
+                    actualType = llvm::Type::getFloatTy(*llvmCtx); // Placeholder type for validation
                     actualTypeName = typeName;
                     std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is NewExpression of type " << typeName << std::endl;
                 } else {
@@ -160,9 +161,10 @@ bool LetIn::Validate(IContext* context) {
                         std::string commonType = findCommonBaseType(thenType, elseType, letContext);
                         
                         if (!commonType.empty() && commonType != "Object") {
-                            llvm::StructType* structType = letContext->getType(commonType);
-                            if (structType) {
-                                actualType = structType->getPointerTo();
+                            // Check if the common type is registered (even if struct is nullptr during validation)
+                            if (letContext->hasType(commonType)) {
+                                // During validation, use placeholder type but keep the correct type name
+                                actualType = llvm::Type::getFloatTy(*llvmCtx);
                                 actualTypeName = commonType;
                             } else {
                                 // Even if struct type is not found, we can still use the common type name
@@ -187,9 +189,10 @@ bool LetIn::Validate(IContext* context) {
             // Check if it's an as expression (type casting)
             else if (auto* asExpr = dynamic_cast<AsExpression*>(binding.expr)) {
                 std::string targetTypeName = asExpr->getTypeName();
-                llvm::StructType* structType = letContext->getType(targetTypeName);
-                if (structType) {
-                    actualType = structType->getPointerTo();
+                // Check if the target type is registered (even if struct is nullptr during validation)
+                if (letContext->hasType(targetTypeName)) {
+                    // During validation, use placeholder type but keep the correct type name
+                    actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = targetTypeName;
                     std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is AsExpression with target type " << targetTypeName << std::endl;
                 } else {
@@ -210,14 +213,27 @@ bool LetIn::Validate(IContext* context) {
             if (!binding.typeAnnotation.empty()) {
                 std::cout << "[DEBUG] LetIn::Validate - Checking type annotation: " << binding.typeAnnotation << " vs actual: " << actualTypeName << std::endl;
                 
-                // Check for type mismatch
-                if (binding.typeAnnotation != actualTypeName) {
+                // Check for type compatibility (exact match or inheritance)
+                bool isCompatible = false;
+                if (binding.typeAnnotation == actualTypeName) {
+                    // Exact type match
+                    isCompatible = true;
+                    std::cout << "[DEBUG] LetIn::Validate - Exact type match" << std::endl;
+                } else if (letContext->isSubtypeOf(actualTypeName, binding.typeAnnotation)) {
+                    // actualTypeName is a subtype of the declared type (inheritance)
+                    isCompatible = true;
+                    std::cout << "[DEBUG] LetIn::Validate - " << actualTypeName << " is a subtype of " << binding.typeAnnotation << std::endl;
+                } else {
+                    std::cout << "[DEBUG] LetIn::Validate - Types are not compatible" << std::endl;
+                }
+                
+                if (!isCompatible) {
                     SEMANTIC_ERROR("Type mismatch: variable '" + binding.name + "' declared as " + 
                                  binding.typeAnnotation + " but assigned " + actualTypeName, location);
                     delete letContext;
                     return false;
                 }
-                std::cout << "[DEBUG] LetIn::Validate - Type annotation matches actual type" << std::endl;
+                std::cout << "[DEBUG] LetIn::Validate - Type annotation is compatible with actual type" << std::endl;
             }
             
             if (!letContext->addVariable(binding.name, actualType)) {
