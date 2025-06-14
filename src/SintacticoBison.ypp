@@ -125,6 +125,9 @@ void yyerror(const char *s) {
 // and is right-associative (standard for exponentiation)
 %right '^'
 
+// Unary operators (like unary minus) have higher precedence than binary operators
+%right UMINUS
+
 // Member access has higher precedence than arithmetic
 %left '.'
 
@@ -947,6 +950,7 @@ expression
     | expression OR expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "||"); }
     | expression IS ID           { $$ = new IsExpression(SourceLocation(yylineno, @2.first_column), $1, $3); free($3); }
     | expression AS ID           { $$ = new AsExpression(SourceLocation(yylineno, @2.first_column), $1, $3); free($3); }
+    | '-' expression %prec UMINUS { $$ = new UnaryOperation(SourceLocation(yylineno, @1.first_column), $2, "-"); }
     | NUMBER                     { $$ = new Number(SourceLocation(yylineno, @1.first_column), $1); }
     | STRING                     { $$ = new StringLiteral(SourceLocation(yylineno, @1.first_column), $1); free($1); }
     | '(' expression ')'         { $$ = $2; }

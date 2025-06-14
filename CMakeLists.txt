@@ -96,6 +96,7 @@ set(CUSTOM_LEXER_BISON_SOURCES
     src/if_statement.cpp
     src/is_expression.cpp
     src/as_expression.cpp
+    src/unary_operation.cpp
 )
 
 # Custom Lexer/Bison executable (MAIN)

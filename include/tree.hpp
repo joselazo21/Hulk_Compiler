@@ -279,6 +279,26 @@ public:
     Expression* getRight() const { return right; }
 };
 
+// Unary Operation class
+class UnaryOperation : public Expression {
+private:
+    Expression* operand;
+    std::string operation;
+
+public:
+    UnaryOperation(Expression* operand, std::string operation);
+    UnaryOperation(const SourceLocation& loc, Expression* operand, std::string operation);
+    std::string toString() override;
+    void printNode(int depth) override;
+    bool Validate(IContext* context) override;
+    llvm::Value* codegen(CodeGenerator& generator) override;
+    ~UnaryOperation();
+    
+    // Getters for type checking
+    const std::string& getOperation() const { return operation; }
+    Expression* getOperand() const { return operand; }
+};
+
 // Number class
 class Number : public Expression {
 private:

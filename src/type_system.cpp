@@ -41,6 +41,20 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
         return nullptr; // Variable not found
     }
     
+    // Unary operations
+    if (auto unaryOp = dynamic_cast<UnaryOperation*>(expr)) {
+        std::string op = unaryOp->getOperation();
+        if (op == "-") {
+            // Unary minus on numbers returns Number
+            const Type* operandType = inferType(unaryOp->getOperand(), context);
+            if (operandType && operandType == registry.getNumberType()) {
+                return registry.getNumberType();
+            }
+        }
+        // Add support for other unary operators as needed
+        return nullptr; // Unsupported unary operation
+    }
+    
     // Binary operations
     if (auto binOp = dynamic_cast<BinaryOperation*>(expr)) {
         // For arithmetic operations, both operands should be Number
