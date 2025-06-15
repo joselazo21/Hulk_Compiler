@@ -501,20 +501,30 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             generator.setNamedValue(varName, globalIter);
         } else {
             // Para variables normales, crear alloca local
-            // llvm::Type* varType = llvm::Type::getInt32Ty(generator.getContext());
+            // For object types, preserve the runtime type information by storing as i8* (generic pointer)
+            // but keep track of the actual runtime type
             llvm::Type* varType = val->getType(); // Use the type of the value
+            
+            // If this is a runtime object type (pointer to struct with runtime type info),
+            // store it as i8* to preserve polymorphism while keeping runtime type info
+            if (varType->isPointerTy()) {
+                llvm::Type* pointedType = varType->getPointerElementType();
+                if (pointedType->isStructTy()) {
+                    llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
+                    std::string typeName = structType->getName().str();
+                    if (typeName.find("runtime.") == 0) {
+                        // This is a runtime object, store as i8* to preserve polymorphism
+                        varType = llvm::Type::getInt8PtrTy(generator.getContext());
+                        // Cast the value to i8* for storage
+                        val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
+                    }
+                }
+            }
 
             llvm::Function* func = generator.getBuilder()->GetInsertBlock()->getParent();
             llvm::IRBuilder<> tmpBuilder(&func->getEntryBlock(), func->getEntryBlock().begin());
             llvm::AllocaInst* alloca = tmpBuilder.CreateAlloca(varType, nullptr, varName);
 
-            // Chequea tipo antes de almacenar
-            if (val->getType() != varType) {
-                SEMANTIC_ERROR("Type mismatch in let-in declaration for '" + varName + "'", getLocation());
-                generator.setContextObject(oldContext);
-                if (letContext) delete letContext;
-                return nullptr;
-            }
             generator.getBuilder()->CreateStore(val, alloca);
             generator.setNamedValue(varName, alloca);
         }
@@ -687,20 +697,30 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                 generator.setNamedValue(varName, globalIter);
             } else {
                 // Para variables normales, crear alloca local
-                // llvm::Type* varType = llvm::Type::getInt32Ty(generator.getContext());
+                // For object types, preserve the runtime type information by storing as i8* (generic pointer)
+                // but keep track of the actual runtime type
                 llvm::Type* varType = val->getType(); // Use the type of the value
+                
+                // If this is a runtime object type (pointer to struct with runtime type info),
+                // store it as i8* to preserve polymorphism while keeping runtime type info
+                if (varType->isPointerTy()) {
+                    llvm::Type* pointedType = varType->getPointerElementType();
+                    if (pointedType->isStructTy()) {
+                        llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
+                        std::string typeName = structType->getName().str();
+                        if (typeName.find("runtime.") == 0) {
+                            // This is a runtime object, store as i8* to preserve polymorphism
+                            varType = llvm::Type::getInt8PtrTy(generator.getContext());
+                            // Cast the value to i8* for storage
+                            val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
+                        }
+                    }
+                }
 
                 llvm::Function* func = generator.getBuilder()->GetInsertBlock()->getParent();
                 llvm::IRBuilder<> tmpBuilder(&func->getEntryBlock(), func->getEntryBlock().begin());
                 llvm::AllocaInst* alloca = tmpBuilder.CreateAlloca(varType, nullptr, varName);
 
-                // Chequea tipo antes de almacenar
-                if (val->getType() != varType) {
-                    SEMANTIC_ERROR("Type mismatch in let-in declaration for '" + varName + "'", getLocation());
-                    generator.setContextObject(oldContext);
-                    if (letContext) delete letContext;
-                    return nullptr;
-                }
                 generator.getBuilder()->CreateStore(val, alloca);
                 generator.setNamedValue(varName, alloca);
             }

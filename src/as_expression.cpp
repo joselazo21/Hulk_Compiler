@@ -142,20 +142,20 @@ llvm::Value* AsExpression::codegen(CodeGenerator& generator) {
     }
     llvm::StructType* runtimeTargetType = llvm::StructType::create(context, runtimeTargetFields, "runtime." + typeName);
     
-    // Create or get the runtime type checking function
-    llvm::Function* runtimeTypeCheckFunc = module->getFunction("__hulk_runtime_type_check");
+    // Create or get the enhanced runtime type checking function
+    llvm::Function* runtimeTypeCheckFunc = module->getFunction("__hulk_runtime_type_check_enhanced");
     if (!runtimeTypeCheckFunc) {
-        // Create the runtime type checking function
-        // bool __hulk_runtime_type_check(void* object, const char* typeName)
+        // Create the enhanced runtime type checking function
+        // int __hulk_runtime_type_check_enhanced(void* object, const char* typeName)
         llvm::FunctionType* funcType = llvm::FunctionType::get(
-            llvm::Type::getInt1Ty(context),
+            llvm::Type::getInt32Ty(context),
             {llvm::Type::getInt8PtrTy(context), llvm::Type::getInt8PtrTy(context)},
             false
         );
         runtimeTypeCheckFunc = llvm::Function::Create(
             funcType,
             llvm::Function::ExternalLinkage,
-            "__hulk_runtime_type_check",
+            "__hulk_runtime_type_check_enhanced",
             module
         );
         
@@ -278,8 +278,11 @@ llvm::Value* AsExpression::codegen(CodeGenerator& generator) {
     llvm::Value* voidPtr = builder->CreateBitCast(actualObjectValue, llvm::Type::getInt8PtrTy(context), "void.ptr");
     llvm::Constant* typeNameStr = builder->CreateGlobalStringPtr(typeName, "target.typename");
     
-    // Call the runtime type checking function
-    llvm::Value* isValidCast = builder->CreateCall(runtimeTypeCheckFunc, {voidPtr, typeNameStr}, "is.valid.cast");
+    // Call the enhanced runtime type checking function
+    llvm::Value* typeCheckResult = builder->CreateCall(runtimeTypeCheckFunc, {voidPtr, typeNameStr}, "type.check.result");
+    
+    // Convert int result to bool (non-zero means true)
+    llvm::Value* isValidCast = builder->CreateICmpNE(typeCheckResult, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), "is.valid.cast");
     
     // Create basic blocks for the conditional cast
     llvm::Function* currentFunc = builder->GetInsertBlock()->getParent();

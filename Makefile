@@ -46,7 +46,7 @@ $(COMPILED_PROGRAM): $(COMPILER_EXECUTABLE) $(SCRIPT_FILE)
 	@# Compile LLVM IR to object file
 	@llc -relocation-model=pic -filetype=obj $(HULK_DIR)/script.ll -o $(HULK_DIR)/output.o
 	@# Link with runtime libraries to create executable
-	@clang $(HULK_DIR)/output.o -o $(COMPILED_PROGRAM) -lc -lm $(BUILD_DIR)/libruntime_iter.a $(BUILD_DIR)/libruntime_print.a
+	@clang $(HULK_DIR)/output.o -o $(COMPILED_PROGRAM) -lc -lm $(BUILD_DIR)/libruntime_iter.a $(BUILD_DIR)/libruntime_print.a $(BUILD_DIR)/libruntime_support.a
 	@echo "Compilation complete. Artifacts stored in $(HULK_DIR)/ directory"
 
 # Execute target - runs the compiled program (automatically compiles if needed)
@@ -58,7 +58,7 @@ execute: $(COMPILED_PROGRAM)
 $(COMPILER_EXECUTABLE):
 	@echo "Building HULK Flex/Bison compiler..."
 	@mkdir -p $(BUILD_DIR)
-	@cd $(BUILD_DIR) && cmake .. && make main_flex_bison runtime_iter runtime_print
+	@cd $(BUILD_DIR) && cmake .. && make main_flex_bison runtime_iter runtime_print runtime_support
 	@echo "Flex/Bison Compiler built successfully"
 
 # Clean target

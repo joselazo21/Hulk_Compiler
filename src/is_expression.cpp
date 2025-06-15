@@ -45,14 +45,31 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
     // Generate code for the object expression
     llvm::Value* objectValue = object->codegen(generator);
     if (!objectValue) {
+        std::cout << "[DEBUG] IsExpression::codegen - objectValue is null!" << std::endl;
         return nullptr;
     }
     
     // Get the object's type
     llvm::Type* objectType = objectValue->getType();
+    std::cout << "[DEBUG] IsExpression::codegen - objectType: " << objectType << std::endl;
     
-    // Handle primitive types first
+    // Check if this is a literal string (global string constant)
+    bool isLiteralString = false;
+    if (llvm::isa<llvm::GlobalVariable>(objectValue)) {
+        llvm::GlobalVariable* gv = llvm::cast<llvm::GlobalVariable>(objectValue);
+        if (gv->hasInitializer() && llvm::isa<llvm::ConstantDataArray>(gv->getInitializer())) {
+            isLiteralString = true;
+        }
+    } else if (llvm::isa<llvm::ConstantExpr>(objectValue)) {
+        llvm::ConstantExpr* ce = llvm::cast<llvm::ConstantExpr>(objectValue);
+        if (ce->getOpcode() == llvm::Instruction::GetElementPtr) {
+            isLiteralString = true;
+        }
+    }
+    
+    // Handle primitive types first - but only for actual primitives, not object pointers
     if (objectType->isFloatTy()) {
+        std::cout << "[DEBUG] IsExpression::codegen - Float type detected" << std::endl;
         // For Number type - check if target type is Number or Object
         if (typeName == "Number" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
@@ -60,6 +77,7 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
     } else if (objectType->isIntegerTy(1)) {
+        std::cout << "[DEBUG] IsExpression::codegen - Boolean type detected" << std::endl;
         // For Boolean type - check if target type is Boolean or Object
         if (typeName == "Boolean" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
@@ -67,14 +85,16 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
     } else if (objectType->isIntegerTy(32)) {
+        std::cout << "[DEBUG] IsExpression::codegen - Integer type detected" << std::endl;
         // For Integer type - check if target type is Number, Integer, or Object
         if (typeName == "Number" || typeName == "Integer" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
         } else {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
-    } else if (objectType->isPointerTy() && objectType->getPointerElementType()->isIntegerTy(8)) {
-        // For String type - check if target type is String or Object
+    } else if (isLiteralString) {
+        std::cout << "[DEBUG] IsExpression::codegen - Literal string type detected" << std::endl;
+        // For String literals - check if target type is String or Object
         if (typeName == "String" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
         } else {
@@ -82,148 +102,58 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
         }
     }
     
-    // Handle object types (pointers to structs)
-    if (!objectType->isPointerTy()) {
-        // If it's not a pointer, it can't be an object type
-        // But check if target is Object (all types inherit from Object)
-        if (typeName == "Object") {
-            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
-        }
-        return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
-    }
+    std::cout << "[DEBUG] IsExpression::codegen - Using runtime type checking for target: " << typeName << std::endl;
+    std::cout << "[DEBUG] IsExpression::codegen - Object value type: " << objectType << std::endl;
+    std::cout << "[DEBUG] IsExpression::codegen - Is pointer type: " << objectType->isPointerTy() << std::endl;
     
-    // Check if it's a pointer to a struct (object type)
-    llvm::Type* pointedType = objectType->getPointerElementType();
-    if (!pointedType->isStructTy()) {
-        // If it doesn't point to a struct, it's not an object type
-        // But check if target is Object (all types inherit from Object)
-        if (typeName == "Object") {
-            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
-        }
-        return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
-    }
+    // For all object types (including runtime types), use runtime type checking
+    // This ensures proper inheritance checking at runtime
     
-    // For struct types, we need to determine the actual type name and check inheritance
-    // Get the struct type name
-    llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
-    std::string actualTypeName = structType->getName().str();
-    
-    // Remove "struct." prefix if present
-    if (actualTypeName.find("struct.") == 0) {
-        actualTypeName = actualTypeName.substr(7);
-    }
-    // Remove "runtime." prefix if present (for objects created with runtime type info)
-    else if (actualTypeName.find("runtime.") == 0) {
-        actualTypeName = actualTypeName.substr(8);
-    }
-    
-    std::cout << "[DEBUG] IsExpression::codegen - Actual type: " << actualTypeName << ", Target type: " << typeName << std::endl;
-    
-    // Check if the actual type is compatible with the target type using inheritance
-    IContext* currentContext = generator.getContextObject();
-    if (currentContext) {
-        bool isCompatible = false;
-        
-        // Direct type match
-        if (actualTypeName == typeName) {
-            isCompatible = true;
-            std::cout << "[DEBUG] IsExpression::codegen - Direct type match" << std::endl;
-        }
-        // Check inheritance relationship
-        else if (currentContext->isSubtypeOf(actualTypeName, typeName)) {
-            isCompatible = true;
-            std::cout << "[DEBUG] IsExpression::codegen - " << actualTypeName << " is subtype of " << typeName << std::endl;
-        }
-        else {
-            std::cout << "[DEBUG] IsExpression::codegen - No inheritance relationship found" << std::endl;
-        }
-        
-        if (isCompatible) {
-            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
-        } else {
-            return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
-        }
-    }
-    
-    // Fallback to runtime type checking if context is not available
-    // Create or get the runtime type checking function
-    llvm::Function* runtimeTypeCheckFunc = module->getFunction("__hulk_runtime_type_check");
+    // Create or get the enhanced runtime type checking function
+    llvm::Function* runtimeTypeCheckFunc = module->getFunction("__hulk_runtime_type_check_enhanced");
     if (!runtimeTypeCheckFunc) {
-        // Create the runtime type checking function
-        // bool __hulk_runtime_type_check(void* object, const char* typeName)
+        std::cout << "[DEBUG] IsExpression::codegen - Creating runtime type check function" << std::endl;
+        // Create the enhanced runtime type checking function
+        // int __hulk_runtime_type_check_enhanced(void* object, const char* typeName)
         llvm::FunctionType* funcType = llvm::FunctionType::get(
-            llvm::Type::getInt1Ty(context),
+            llvm::Type::getInt32Ty(context), // Return int instead of bool for compatibility
             {llvm::Type::getInt8PtrTy(context), llvm::Type::getInt8PtrTy(context)},
             false
         );
         runtimeTypeCheckFunc = llvm::Function::Create(
             funcType,
             llvm::Function::ExternalLinkage,
-            "__hulk_runtime_type_check",
+            "__hulk_runtime_type_check_enhanced",
             module
         );
-        
-        // Implement the function body
-        llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", runtimeTypeCheckFunc);
-        llvm::BasicBlock* checkBB = llvm::BasicBlock::Create(context, "check", runtimeTypeCheckFunc);
-        llvm::BasicBlock* trueBB = llvm::BasicBlock::Create(context, "true", runtimeTypeCheckFunc);
-        llvm::BasicBlock* falseBB = llvm::BasicBlock::Create(context, "false", runtimeTypeCheckFunc);
-        
-        llvm::IRBuilder<> funcBuilder(entryBB);
-        
-        // Get function arguments
-        auto args = runtimeTypeCheckFunc->arg_begin();
-        llvm::Value* objPtr = &*args++;
-        llvm::Value* targetTypeName = &*args;
-        
-        // Cast object pointer to i8** to access the first field (type ID)
-        llvm::Value* typeIdPtrPtr = funcBuilder.CreateBitCast(objPtr, llvm::Type::getInt8PtrTy(context)->getPointerTo(), "typeid.ptr.ptr");
-        
-        // Load the type ID string from the first field
-        llvm::Value* actualTypeName = funcBuilder.CreateLoad(llvm::Type::getInt8PtrTy(context), typeIdPtrPtr, "actual.typename");
-        
-        // Check if actualTypeName is null (object without runtime type info)
-        llvm::Value* isNull = funcBuilder.CreateICmpEQ(actualTypeName, llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(context)), "is.null");
-        funcBuilder.CreateCondBr(isNull, falseBB, checkBB);
-        
-        // Check block: compare type names
-        funcBuilder.SetInsertPoint(checkBB);
-        
-        // Create or get strcmp function
-        llvm::Function* strcmpFunc = module->getFunction("strcmp");
-        if (!strcmpFunc) {
-            llvm::FunctionType* strcmpType = llvm::FunctionType::get(
-                llvm::Type::getInt32Ty(context),
-                {llvm::Type::getInt8PtrTy(context), llvm::Type::getInt8PtrTy(context)},
-                false
-            );
-            strcmpFunc = llvm::Function::Create(
-                strcmpType,
-                llvm::Function::ExternalLinkage,
-                "strcmp",
-                module
-            );
-        }
-        
-        llvm::Value* cmpResult = funcBuilder.CreateCall(strcmpFunc, {actualTypeName, targetTypeName}, "strcmp.result");
-        llvm::Value* isEqual = funcBuilder.CreateICmpEQ(cmpResult, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), "is.equal");
-        funcBuilder.CreateCondBr(isEqual, trueBB, falseBB);
-        
-        // True block
-        funcBuilder.SetInsertPoint(trueBB);
-        funcBuilder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1));
-        
-        // False block
-        funcBuilder.SetInsertPoint(falseBB);
-        funcBuilder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0));
+    } else {
+        std::cout << "[DEBUG] IsExpression::codegen - Runtime type check function already exists" << std::endl;
     }
     
     // Cast object to void* and create type name string
-    llvm::Value* voidPtr = builder->CreateBitCast(objectValue, llvm::Type::getInt8PtrTy(context), "void.ptr");
+    llvm::Value* voidPtr = nullptr;
+    if (objectType->isPointerTy()) {
+        // Already a pointer, just cast to i8*
+        voidPtr = builder->CreateBitCast(objectValue, llvm::Type::getInt8PtrTy(context), "void.ptr");
+    } else {
+        // Not a pointer, this shouldn't happen for objects but handle it gracefully
+        std::cout << "[DEBUG] IsExpression::codegen - Warning: object is not a pointer type!" << std::endl;
+        return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
+    }
+    
     llvm::Constant* typeNameStr = builder->CreateGlobalStringPtr(typeName, "target.typename");
     
-    // Call the runtime type checking function
+    std::cout << "[DEBUG] IsExpression::codegen - About to call runtime type check function" << std::endl;
+    std::cout << "[DEBUG] IsExpression::codegen - voidPtr: " << voidPtr << std::endl;
+    std::cout << "[DEBUG] IsExpression::codegen - typeNameStr: " << typeNameStr << std::endl;
+    
+    // Call the enhanced runtime type checking function
     llvm::Value* result = builder->CreateCall(runtimeTypeCheckFunc, {voidPtr, typeNameStr}, "is.result");
     
-    return result;
+    // Convert int result to bool (non-zero means true)
+    llvm::Value* boolResult = builder->CreateICmpNE(result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), "is.bool.result");
+    
+    std::cout << "[DEBUG] IsExpression::codegen - Runtime type check call created successfully" << std::endl;
+    
+    return boolResult;
 }

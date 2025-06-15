@@ -149,6 +149,9 @@ add_library(runtime_iter STATIC src/runtime_iter.c)
 # Añade print.c como biblioteca estática para las funciones de runtime
 add_library(runtime_print STATIC src/print.c)
 
+# Añade runtime_support.c como biblioteca estática para downcasting
+add_library(runtime_support STATIC src/enhanced_runtime_support.c)
+
 target_link_libraries(main_flex_bison PRIVATE
     ${llvm_libs}
     ${LLVM_LIBRARIES}

@@ -97,11 +97,11 @@ bool NewExpression::Validate(IContext* context) {
         std::string actualType = "Number"; // Default
         
         // Check if argument is a string literal
-        if (auto* stringLit = dynamic_cast<StringLiteral*>(args[i])) {
+        if (dynamic_cast<StringLiteral*>(args[i])) {
             actualType = "String";
         }
         // Check if argument is a number literal
-        else if (auto* numberLit = dynamic_cast<Number*>(args[i])) {
+        else if (dynamic_cast<Number*>(args[i])) {
             actualType = "Number";
         }
         // For other expressions, we'd need more sophisticated type inference
@@ -154,11 +154,20 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     }
 
     // Create a new struct type that includes runtime type information
-    // The new struct will have: [type_id_field, original_fields...]
+    // The new struct will have: [type_info_field, original_fields...]
     std::vector<llvm::Type*> newFieldTypes;
     
-    // Add type ID field as the first field (i8* to store type name)
-    newFieldTypes.push_back(llvm::Type::getInt8PtrTy(context));
+    // Create TypeInfo struct type if it doesn't exist
+    llvm::StructType* typeInfoType = llvm::StructType::getTypeByName(context, "struct.TypeInfo");
+    if (!typeInfoType) {
+        std::vector<llvm::Type*> typeInfoFields;
+        typeInfoFields.push_back(llvm::Type::getInt8PtrTy(context)); // type_name
+        typeInfoFields.push_back(llvm::Type::getInt8PtrTy(context)); // parent_type_name (simplified)
+        typeInfoType = llvm::StructType::create(context, typeInfoFields, "struct.TypeInfo");
+    }
+    
+    // Add type info field as the first field (pointer to TypeInfo struct)
+    newFieldTypes.push_back(typeInfoType->getPointerTo());
     
     // Add all original fields
     for (unsigned i = 0; i < structType->getNumElements(); ++i) {
@@ -193,10 +202,26 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     // Cast the malloc result to the runtime struct type
     llvm::Value* objectPtr = builder->CreateBitCast(mallocResult, runtimeStructType->getPointerTo(), "object.ptr");
 
-    // Store the type name in the first field for runtime type checking
+    // Create and store TypeInfo structure for runtime type checking
+    // First allocate memory for TypeInfo
+    uint64_t typeInfoSize = dataLayout.getTypeAllocSize(typeInfoType);
+    llvm::Value* typeInfoSizeValue = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), typeInfoSize);
+    llvm::Value* typeInfoMalloc = builder->CreateCall(mallocFunc, {typeInfoSizeValue}, "typeinfo.malloc");
+    llvm::Value* typeInfoPtr = builder->CreateBitCast(typeInfoMalloc, typeInfoType->getPointerTo(), "typeinfo.ptr");
+    
+    // Store type name in TypeInfo
     llvm::Constant* typeNameStr = builder->CreateGlobalStringPtr(typeName, "typename." + typeName);
-    llvm::Value* typeIdPtr = builder->CreateStructGEP(runtimeStructType, objectPtr, 0, "typeid.ptr");
-    builder->CreateStore(typeNameStr, typeIdPtr);
+    llvm::Value* typeNameFieldPtr = builder->CreateStructGEP(typeInfoType, typeInfoPtr, 0, "typename.field.ptr");
+    builder->CreateStore(typeNameStr, typeNameFieldPtr);
+    
+    // Store parent type name in TypeInfo
+    llvm::Constant* parentTypeNameStr = builder->CreateGlobalStringPtr(parentType, "parentname." + typeName);
+    llvm::Value* parentNameFieldPtr = builder->CreateStructGEP(typeInfoType, typeInfoPtr, 1, "parentname.field.ptr");
+    builder->CreateStore(parentTypeNameStr, parentNameFieldPtr);
+    
+    // Store TypeInfo pointer in the object's first field
+    llvm::Value* objectTypeInfoPtr = builder->CreateStructGEP(runtimeStructType, objectPtr, 0, "object.typeinfo.ptr");
+    builder->CreateStore(typeInfoPtr, objectTypeInfoPtr);
 
     // --- NEW LOGIC: handle parent arguments ---
     // We need to get the TypeDefinition AST node to access parentArgs.
