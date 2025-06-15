@@ -444,11 +444,11 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                 std::cout << "[DEBUG] Found vector expression, isGenerator: " << vectorExpr->getIsGenerator() << std::endl;
                 if (!vectorExpr->getIsGenerator()) {
                     // Extract vector values and store them for the iterator
-                    std::vector<int> vectorValues;
+                    std::vector<double> vectorValues;
                     std::cout << "[DEBUG] Extracting " << vectorExpr->getElements().size() << " elements" << std::endl;
                     for (auto* elem : vectorExpr->getElements()) {
                         if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
-                            int value = static_cast<int>(numberExpr->getValue());
+                            double value = numberExpr->getValue();
                             std::cout << "[DEBUG] Found number element: " << value << std::endl;
                             vectorValues.push_back(value);
                         } else {
@@ -469,10 +469,10 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                 
                 // Try to find vector data for the source variable
                 if (generator.hasVectorDataForIterator(sourceVarName)) {
-                    std::vector<int> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
+                    std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
                     std::cout << "[DEBUG] Found vector data for source variable " << sourceVarName << ", transferring to " << varName << std::endl;
                     std::cout << "[DEBUG] Vector data values: ";
-                    for (int val : sourceVectorData) {
+                    for (double val : sourceVectorData) {
                         std::cout << val << " ";
                     }
                     std::cout << std::endl;
@@ -654,11 +654,11 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                     std::cout << "[DEBUG] Found vector expression, isGenerator: " << vectorExpr->getIsGenerator() << std::endl;
                     if (!vectorExpr->getIsGenerator()) {
                         // Extract vector values and store them for the iterator
-                        std::vector<int> vectorValues;
+                        std::vector<double> vectorValues;
                         std::cout << "[DEBUG] Extracting " << vectorExpr->getElements().size() << " elements" << std::endl;
                         for (auto* elem : vectorExpr->getElements()) {
                             if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
-                                int value = static_cast<int>(numberExpr->getValue());
+                                double value = numberExpr->getValue();
                                 std::cout << "[DEBUG] Found number element: " << value << std::endl;
                                 vectorValues.push_back(value);
                             } else {
@@ -679,10 +679,10 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                     
                     // Try to find vector data for the source variable
                     if (generator.hasVectorDataForIterator(sourceVarName)) {
-                        std::vector<int> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
+                        std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
                         std::cout << "[DEBUG] Found vector data for source variable " << sourceVarName << ", transferring to " << varName << std::endl;
                         std::cout << "[DEBUG] Vector data values: ";
-                        for (int val : sourceVectorData) {
+                        for (double val : sourceVectorData) {
                             std::cout << val << " ";
                         }
                         std::cout << std::endl;

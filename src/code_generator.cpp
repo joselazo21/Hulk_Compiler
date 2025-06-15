@@ -770,8 +770,25 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
         llvm::IRBuilder<> B(bb);
 
         // Buscar el array global con los valores del vector
-        std::string arrayName = "__vector_data_numbers"; // Nombre fijo para simplificar
+        std::string arrayName = "__vector_data_" + iterName;
         llvm::GlobalVariable* vectorArray = TheModule->getGlobalVariable(arrayName);
+        
+        // If not found with iterator name, search through all existing vector data arrays
+        if (!vectorArray) {
+            std::cout << "[DEBUG] Array " << arrayName << " not found, searching all globals..." << std::endl;
+            // List all globals to debug
+            for (auto &G : TheModule->globals()) {
+                std::string globalName = G.getName().str();
+                std::cout << "[DEBUG] Found global: " << globalName << std::endl;
+                if (globalName.find("__vector_data_") == 0) {
+                    std::cout << "[DEBUG] Found vector data global: " << globalName << std::endl;
+                    // Use the first vector data array we find
+                    vectorArray = &G;
+                    arrayName = globalName;
+                    break;
+                }
+            }
+        }
         
         if (vectorArray) {
             std::cout << "[DEBUG] Found vector data array: " << arrayName << std::endl;
@@ -791,9 +808,32 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), 0),
                 "is_negative");
             
-            // Assume array size is 5 for simplicity
+            // Get the actual array size from the global array type
+            llvm::Type* arrayType = vectorArray->getValueType();
+            int arraySize = 0;
+            if (auto* arrType = llvm::dyn_cast<llvm::ArrayType>(arrayType)) {
+                arraySize = arrType->getNumElements();
+                std::cout << "[DEBUG] Array size determined from type: " << arraySize << std::endl;
+            } else {
+                // Fallback: try to get size from stored vector data
+                std::vector<double> vectorValues;
+                if (hasVectorDataForIterator(iterName)) {
+                    vectorValues = getVectorDataForIterator(iterName);
+                    arraySize = vectorValues.size();
+                    std::cout << "[DEBUG] Array size from stored vector data: " << arraySize << std::endl;
+                } else {
+                    // Last resort: search through all vector data
+                    for (const auto& pair : getAllVectorData()) {
+                        vectorValues = pair.second;
+                        arraySize = vectorValues.size();
+                        std::cout << "[DEBUG] Array size from first available vector data: " << arraySize << std::endl;
+                        break;
+                    }
+                }
+            }
+            
             llvm::Value* isTooBig = B.CreateICmpSGE(actualCurrentVal,
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), 5),
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), arraySize),
                 "is_too_big");
                 
             llvm::Value* isOutOfBounds = B.CreateOr(isNegative, isTooBig, "is_out_of_bounds");
@@ -820,7 +860,7 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
                 indices,
                 "element_ptr"
             );
-            llvm::Value* elementValue = B.CreateLoad(llvm::Type::getInt32Ty(*TheContext), elementPtr, "element_value");
+            llvm::Value* elementValue = B.CreateLoad(llvm::Type::getDoubleTy(*TheContext), elementPtr, "element_value");
             
             std::cout << "[DEBUG] Accessing vector element at index: ";
             actualCurrentVal->print(llvm::errs());
@@ -846,9 +886,9 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
 }
 
 // Method to store vector data for iteration
-void CodeGenerator::storeVectorDataForIterator(const std::string& iterName, const std::vector<int>& values) {
+void CodeGenerator::storeVectorDataForIterator(const std::string& iterName, const std::vector<double>& values) {
     std::cout << "[DEBUG] Storing vector data for iterator: " << iterName << " with values: ";
-    for (int val : values) {
+    for (double val : values) {
         std::cout << val << " ";
     }
     std::cout << std::endl;
@@ -863,12 +903,12 @@ void CodeGenerator::storeVectorDataForIterator(const std::string& iterName, cons
     // Only create if it doesn't exist yet
     if (!existingArray && !values.empty()) {
         std::vector<llvm::Constant*> constants;
-        for (int val : values) {
-            constants.push_back(llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), val));
+        for (double val : values) {
+            constants.push_back(llvm::ConstantFP::get(llvm::Type::getDoubleTy(*TheContext), val));
         }
         
         llvm::ArrayType* arrayType = llvm::ArrayType::get(
-            llvm::Type::getInt32Ty(*TheContext), 
+            llvm::Type::getDoubleTy(*TheContext), 
             values.size()
         );
         
@@ -893,16 +933,16 @@ bool CodeGenerator::hasVectorDataForIterator(const std::string& iterName) const 
 }
 
 // Get vector data for an iterator
-std::vector<int> CodeGenerator::getVectorDataForIterator(const std::string& iterName) const {
+std::vector<double> CodeGenerator::getVectorDataForIterator(const std::string& iterName) const {
     auto it = vectorData.find(iterName);
     if (it != vectorData.end()) {
         return it->second;
     }
-    return std::vector<int>(); // Return empty vector if not found
+    return std::vector<double>(); // Return empty vector if not found
 }
 
 // Get all vector data
-const std::map<std::string, std::vector<int>>& CodeGenerator::getAllVectorData() const {
+const std::map<std::string, std::vector<double>>& CodeGenerator::getAllVectorData() const {
     return vectorData;
 }
 

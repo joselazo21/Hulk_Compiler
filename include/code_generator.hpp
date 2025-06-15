@@ -42,11 +42,11 @@ public:
     llvm::GlobalVariable* getIteratorGlobalVariable(const std::string& iterName);
     
     // Vector data storage for iteration
-    void storeVectorDataForIterator(const std::string& iterName, const std::vector<int>& values);
+    void storeVectorDataForIterator(const std::string& iterName, const std::vector<double>& values);
     bool hasVectorDataForIterator(const std::string& iterName) const;
-    std::vector<int> getVectorDataForIterator(const std::string& iterName) const;
-    const std::map<std::string, std::vector<int>>& getAllVectorData() const;
-    std::map<std::string, std::vector<int>> vectorData;
+    std::vector<double> getVectorDataForIterator(const std::string& iterName) const;
+    const std::map<std::string, std::vector<double>>& getAllVectorData() const;
+    std::map<std::string, std::vector<double>> vectorData;
     
     llvm::LLVMContext& getContext() { return *TheContext; }
     llvm::Module* getModule() { return TheModule; }
