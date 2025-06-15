@@ -115,6 +115,13 @@ bool LetIn::Validate(IContext* context) {
     if (useTypedDecls) {
         // Process typed declarations with type checking
         for (const auto& binding : typedDecls) {
+            // Check if trying to declare 'self' - this is not allowed
+            if (binding.name == "self") {
+                SEMANTIC_ERROR("Cannot declare variable 'self': 'self' is not a valid assignment target", location);
+                delete letContext;
+                return false;
+            }
+            
             llvm::LLVMContext* llvmCtx = context->getLLVMContext();
             
             // Infer the actual type of the declaration expression
@@ -256,6 +263,13 @@ bool LetIn::Validate(IContext* context) {
     } else {
         // Legacy processing for backward compatibility
         for (const auto& decl : decls) {
+            // Check if trying to declare 'self' - this is not allowed
+            if (decl.first == "self") {
+                SEMANTIC_ERROR("Cannot declare variable 'self': 'self' is not a valid assignment target", location);
+                delete letContext;
+                return false;
+            }
+            
             llvm::LLVMContext* llvmCtx = context->getLLVMContext();
             
             // Infer the type of the declaration expression

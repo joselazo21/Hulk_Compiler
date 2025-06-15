@@ -36,6 +36,12 @@ void AssignmentExpression::printNode(int depth) {
 }
 
 bool AssignmentExpression::Validate(IContext* context) {
+    // Check if trying to assign to 'self' - this is not allowed
+    if (!memberAccess && id == "self") {
+        SEMANTIC_ERROR("Cannot assign to 'self': 'self' is not a valid assignment target", location);
+        return false;
+    }
+    
     if (!expr->Validate(context)) {
         if (memberAccess) {
             SEMANTIC_ERROR("Error in assignment expression to member", location);

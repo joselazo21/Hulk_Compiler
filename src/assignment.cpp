@@ -16,6 +16,12 @@ void Assignment::printNode(int depth) {
 }
 
 bool Assignment::Validate(IContext* context) {
+    // Check if trying to assign to 'self' - this is not allowed
+    if (id == "self") {
+        SEMANTIC_ERROR("Cannot assign to 'self': 'self' is not a valid assignment target", location);
+        return false;
+    }
+    
     if (!expr->Validate(context)) {
         SEMANTIC_ERROR("Error in assignment to variable '" + id + "'", location);
         return false;

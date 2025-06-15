@@ -47,8 +47,8 @@ llvm::Value* WhileStatement::codegen(CodeGenerator& generator) {
     llvm::BasicBlock* bodyBB = llvm::BasicBlock::Create(generator.getContext(), "while.body", func);
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(generator.getContext(), "while.end", func);
 
-    llvm::Value* resultPtr = generator.getBuilder()->CreateAlloca(
-        llvm::Type::getFloatTy(generator.getContext()), nullptr, "while.result");
+    // Don't pre-allocate result pointer - we'll create it dynamically based on the actual value type
+    llvm::Value* resultPtr = nullptr;
 
     generator.getBuilder()->CreateBr(condBB);
 
@@ -82,6 +82,11 @@ llvm::Value* WhileStatement::codegen(CodeGenerator& generator) {
 
     if (lastValue && !lastValue->getType()->isVoidTy()) {
         if (!currentBodyBB->getTerminator()) {
+            // Create result pointer with the correct type based on the actual value
+            if (!resultPtr) {
+                llvm::IRBuilder<> tmpBuilder(&func->getEntryBlock(), func->getEntryBlock().begin());
+                resultPtr = tmpBuilder.CreateAlloca(lastValue->getType(), nullptr, "while.result");
+            }
             generator.getBuilder()->CreateStore(lastValue, resultPtr);
         }
     }

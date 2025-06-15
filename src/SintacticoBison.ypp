@@ -759,6 +759,10 @@ statement
             new AssignmentExpression(SourceLocation(yylineno, @1.first_column), $1, $3));
         free($1);
     }
+    | SELF ASSIGN expression ';' { // Self assignment statement - should be caught as semantic error
+        $$ = new ExpressionStatement(SourceLocation(yylineno, @1.first_column), 
+            new AssignmentExpression(SourceLocation(yylineno, @1.first_column), "self", $3));
+    }
     | while_statement
     | expression_statement
     ;
@@ -864,6 +868,9 @@ expression
     | ID ASSIGN expression       { // Assignment as expression
         $$ = new AssignmentExpression(SourceLocation(yylineno, @1.first_column), $1, $3);
         free($1);
+    }
+    | SELF ASSIGN expression     { // Self assignment - should be caught as semantic error
+        $$ = new AssignmentExpression(SourceLocation(yylineno, @1.first_column), "self", $3);
     }
     | expression '.' ID ASSIGN expression { // Member assignment as expression
         auto memberAccess = new MemberAccess(SourceLocation(yylineno, @2.first_column), $1, $3);
@@ -1041,6 +1048,17 @@ typed_binding_list_new // Produces std::vector<LetBinding>*
         free($3);
         free($5);
     }
+    | typed_binding_list_new ',' LET ID ASSIGN expression { // Subsequent bindings with LET keyword
+        $$ = $1;
+        $$->push_back(LetBinding(std::string($4), "", $6));
+        free($4);
+    }
+    | typed_binding_list_new ',' LET ID ':' ID ASSIGN expression { // Subsequent bindings with LET keyword and type annotation
+        $$ = $1;
+        $$->push_back(LetBinding(std::string($4), std::string($6), $8));
+        free($4);
+        free($6);
+    }
     ;
 
 // Keep the old binding_list for backward compatibility with while_expr
@@ -1068,6 +1086,18 @@ binding_list // Produces std::vector<std::pair<std::string, Expression*>>*
         $$->push_back(std::make_pair(std::string($3), $7));
         free($3);
         free($5);
+    }
+    | binding_list ',' LET ID ASSIGN expression { // Subsequent bindings with LET keyword
+        $$ = $1;
+        $$->push_back(std::make_pair(std::string($4), $6));
+        free($4);
+    }
+    | binding_list ',' LET ID ':' ID ASSIGN expression { // Subsequent bindings with LET keyword and type annotation
+        $$ = $1;
+        // Store just the variable name, ignore type annotation for now (for backward compatibility)
+        $$->push_back(std::make_pair(std::string($4), $8));
+        free($4);
+        free($6);
     }
     ;
 
