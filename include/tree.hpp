@@ -129,6 +129,9 @@ public:
     virtual bool isDefined(const std::string& name) = 0;
     virtual bool isDefined(std::string function, int args) = 0;
     virtual bool addVariable(const std::string& name, llvm::Type* type = nullptr) = 0;
+    virtual bool addVariable(const std::string& name, llvm::Type* type, const std::string& typeName) = 0;
+    virtual std::string getVariableTypeName(const std::string& name) = 0;
+    virtual void setVariableTypeName(const std::string& name, const std::string& typeName) = 0;
     virtual bool addFunction(std::string function, const std::vector<std::string>& params) = 0;
     virtual bool addFunction(const std::string& name, const std::vector<std::string>& params, 
                            const std::vector<std::string>& paramTypes, const std::string& returnType) = 0;
@@ -182,6 +185,7 @@ private:
     
     std::map<std::string, VariableInfo> variables;
     std::map<std::string, llvm::Type*> variableTypes;
+    std::map<std::string, std::string> variableTypeNames; // Map variable names to semantic type names
     std::map<std::string, std::vector<std::string>> functions; // Legacy support
     std::map<std::string, FunctionInfo> typedFunctions; // New typed functions
     IContext* parent;
@@ -204,6 +208,9 @@ private:
 
 public:
     bool addVariable(const std::string& name, llvm::Type* type = nullptr) override;
+    bool addVariable(const std::string& name, llvm::Type* type, const std::string& typeName) override;
+    std::string getVariableTypeName(const std::string& name) override;
+    void setVariableTypeName(const std::string& name, const std::string& typeName) override;
     bool isDefined(const std::string& name) override;
     bool isDefined(std::string function, int args) override;
     bool addVariable(Variable* var) override;

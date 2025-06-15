@@ -236,7 +236,7 @@ bool LetIn::Validate(IContext* context) {
                 std::cout << "[DEBUG] LetIn::Validate - Type annotation is compatible with actual type" << std::endl;
             }
             
-            if (!letContext->addVariable(binding.name, actualType)) {
+            if (!letContext->addVariable(binding.name, actualType, actualTypeName)) {
                 SEMANTIC_ERROR("Variable " + binding.name + " already defined in this scope", location);
                 delete letContext;
                 return false;
@@ -504,6 +504,7 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             // For object types, preserve the runtime type information by storing as i8* (generic pointer)
             // but keep track of the actual runtime type
             llvm::Type* varType = val->getType(); // Use the type of the value
+            std::string semanticTypeName; // Track the semantic type name
             
             // If this is a runtime object type (pointer to struct with runtime type info),
             // store it as i8* to preserve polymorphism while keeping runtime type info
@@ -513,10 +514,17 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                     llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
                     std::string typeName = structType->getName().str();
                     if (typeName.find("runtime.") == 0) {
+                        // Extract the semantic type name (remove "runtime." prefix)
+                        semanticTypeName = typeName.substr(8);
                         // This is a runtime object, store as i8* to preserve polymorphism
                         varType = llvm::Type::getInt8PtrTy(generator.getContext());
                         // Cast the value to i8* for storage
                         val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
+                    } else if (typeName.find("struct.") == 0) {
+                        // Extract the semantic type name (remove "struct." prefix)
+                        semanticTypeName = typeName.substr(7);
+                    } else {
+                        semanticTypeName = typeName;
                     }
                 }
             }
@@ -527,6 +535,12 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
 
             generator.getBuilder()->CreateStore(val, alloca);
             generator.setNamedValue(varName, alloca);
+            
+            // Store the semantic type name if we have one
+            if (!semanticTypeName.empty()) {
+                generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
+                std::cout << "[DEBUG] LetIn::codegen - Stored semantic type name '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
+            }
         }
     }
     } else {
@@ -700,6 +714,7 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                 // For object types, preserve the runtime type information by storing as i8* (generic pointer)
                 // but keep track of the actual runtime type
                 llvm::Type* varType = val->getType(); // Use the type of the value
+                std::string semanticTypeName; // Track the semantic type name
                 
                 // If this is a runtime object type (pointer to struct with runtime type info),
                 // store it as i8* to preserve polymorphism while keeping runtime type info
@@ -709,10 +724,17 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                         llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
                         std::string typeName = structType->getName().str();
                         if (typeName.find("runtime.") == 0) {
+                            // Extract the semantic type name (remove "runtime." prefix)
+                            semanticTypeName = typeName.substr(8);
                             // This is a runtime object, store as i8* to preserve polymorphism
                             varType = llvm::Type::getInt8PtrTy(generator.getContext());
                             // Cast the value to i8* for storage
                             val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
+                        } else if (typeName.find("struct.") == 0) {
+                            // Extract the semantic type name (remove "struct." prefix)
+                            semanticTypeName = typeName.substr(7);
+                        } else {
+                            semanticTypeName = typeName;
                         }
                     }
                 }
@@ -723,6 +745,12 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
 
                 generator.getBuilder()->CreateStore(val, alloca);
                 generator.setNamedValue(varName, alloca);
+                
+                // Store the semantic type name if we have one
+                if (!semanticTypeName.empty()) {
+                    generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
+                    std::cout << "[DEBUG] LetIn::codegen - Stored semantic type name '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
+                }
             }
         }
     }

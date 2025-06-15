@@ -177,6 +177,10 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     // Create the new struct type with runtime type information
     llvm::StructType* runtimeStructType = llvm::StructType::create(context, newFieldTypes, "runtime." + typeName);
     
+    // Register the runtime struct type in the context
+    globalContext->addType("runtime." + typeName, runtimeStructType);
+    std::cout << "[DEBUG] Registered runtime struct type: runtime." << typeName << std::endl;
+    
     // Allocate memory for the runtime struct (not the original struct)
     llvm::DataLayout dataLayout(module);
     uint64_t runtimeStructSize = dataLayout.getTypeAllocSize(runtimeStructType);
@@ -284,14 +288,20 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     }
 
     // Assign parent fields using evaluated parent arguments
+    std::cout << "[DEBUG] Assigning " << parentFieldCount << " parent fields for type " << typeName << std::endl;
     for (int i = 0; i < parentFieldCount; ++i) {
         llvm::Value* value = nullptr;
+        std::string fieldName = globalContext->getFieldName(typeName, i);
+        std::cout << "[DEBUG] Processing parent field " << i << " (fieldName=" << fieldName << ")" << std::endl;
+        
         if (i < static_cast<int>(evaluatedParentArgs.size())) {
             value = evaluatedParentArgs[i];
+            std::cout << "[DEBUG] Using evaluated parent argument " << i << " for field " << fieldName << std::endl;
         } else if (i < static_cast<int>(args.size())) {
             // Fallback: use constructor argument if parentArgs not specified
             // Re-evaluate since we're in a new scope
             value = args[i]->codegen(generator);
+            std::cout << "[DEBUG] Using constructor argument " << i << " for parent field " << fieldName << std::endl;
         } else {
             // Default to appropriate zero value based on field type
             llvm::Type* fieldType = runtimeStructType->getElementType(i + 1); // +1 for type ID field
@@ -304,12 +314,20 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             } else {
                 value = llvm::Constant::getNullValue(fieldType);
             }
+            std::cout << "[DEBUG] Using default value for parent field " << fieldName << std::endl;
         }
         if (!value) {
+            std::cout << "[DEBUG] ERROR: Failed to get value for parent field " << fieldName << std::endl;
             generator.popScope();
             return nullptr;
         }
-        std::string fieldName = globalContext->getFieldName(typeName, i);
+        
+        // Debug: print value type
+        std::string valueTypeStr;
+        llvm::raw_string_ostream rso(valueTypeStr);
+        value->getType()->print(rso);
+        std::cout << "[DEBUG] Parent field " << fieldName << " value type: " << valueTypeStr << std::endl;
+        
         llvm::Value* indices[2] = {
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), i + 1) // +1 to account for type ID field
@@ -321,6 +339,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             "field." + fieldName
         );
         builder->CreateStore(value, fieldPtr);
+        std::cout << "[DEBUG] Stored value for parent field " << fieldName << std::endl;
     }
 
     // Assign own fields (after parent fields)
@@ -386,6 +405,18 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
                 value = llvm::Constant::getNullValue(fieldType);
             }
         }
+        
+        // Debug: print value type and expected field type
+        std::string valueTypeStr;
+        llvm::raw_string_ostream rso1(valueTypeStr);
+        value->getType()->print(rso1);
+        
+        std::string fieldTypeStr;
+        llvm::raw_string_ostream rso2(fieldTypeStr);
+        llvm::Type* expectedFieldType = runtimeStructType->getElementType(fieldIdx + 1);
+        expectedFieldType->print(rso2);
+        
+        std::cout << "[DEBUG] Own field " << fieldName << " value type: " << valueTypeStr << ", expected: " << fieldTypeStr << std::endl;
         
         llvm::Value* indices[2] = {
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),

@@ -37,12 +37,29 @@ void Program::printNode(int depth) {
 }
 
 bool Program::Validate(IContext* context) {
-    // First pass: register all type names in the context
+    // First pass: check for duplicate type definitions and register all type names in the context
     // This allows types to reference each other (including inheritance)
+    std::unordered_set<std::string> typeNames;
     for (auto* t : types) {
+        const std::string& typeName = t->getName();
+        
+        // Check for duplicate type definitions
+        if (typeNames.find(typeName) != typeNames.end()) {
+            SEMANTIC_ERROR("Type '" + typeName + "' is already defined", t->getLocation());
+            return false;
+        }
+        
+        // Check if trying to redefine builtin types
+        if (typeName == "Number" || typeName == "String" || typeName == "Boolean" || typeName == "Object") {
+            SEMANTIC_ERROR("Cannot redefine builtin type '" + typeName + "'", t->getLocation());
+            return false;
+        }
+        
+        typeNames.insert(typeName);
+        
         // For now, just register the type name with a nullptr
         // The actual struct type will be created during codegen
-        context->addType(t->getName(), nullptr);
+        context->addType(typeName, nullptr);
     }
     
     // Second pass: register inheritance relationships

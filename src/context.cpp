@@ -187,6 +187,30 @@ bool Context::addVariable(const std::string& name, llvm::Type* type) {
     return true;
 }
 
+bool Context::addVariable(const std::string& name, llvm::Type* type, const std::string& typeName) {
+    if (variables.count(name)) return false;
+    variables[name] = {type};
+    // Also store in variableTypes for getVariableType() method
+    if (type) {
+        variableTypes[name] = type;
+    }
+    // Store the semantic type name
+    variableTypeNames[name] = typeName;
+    return true;
+}
+
+std::string Context::getVariableTypeName(const std::string& name) {
+    auto it = variableTypeNames.find(name);
+    if (it != variableTypeNames.end()) {
+        return it->second;
+    }
+    return parent ? parent->getVariableTypeName(name) : "";
+}
+
+void Context::setVariableTypeName(const std::string& name, const std::string& typeName) {
+    variableTypeNames[name] = typeName;
+}
+
 // Object-oriented features implementation
 bool Context::addType(const std::string& name, llvm::StructType* type) {
     auto it = types.find(name);

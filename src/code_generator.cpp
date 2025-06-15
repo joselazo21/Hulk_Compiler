@@ -407,6 +407,12 @@ llvm::Value* CodeGenerator::generatePrintCall(llvm::Value* value) {
     if (value->getType()->isPointerTy() &&
         value->getType()->getPointerElementType()->isIntegerTy(8)) {
         std::cout << "Printing string value\n";
+        
+        // Debug: Check if the string pointer is valid
+        std::cout << "[DEBUG] String pointer value: ";
+        value->print(llvm::errs());
+        std::cout << std::endl;
+        
         strToPrint = value;
         formatStr = createGlobalString("%s\n");
     } else if (value->getType()->isIntegerTy(1)) {
@@ -426,6 +432,12 @@ llvm::Value* CodeGenerator::generatePrintCall(llvm::Value* value) {
         strToPrint = value;
     } else if (value->getType()->isFloatTy()) {
         std::cout << "Printing float value\n";
+        
+        // Debug: Check the float value
+        std::cout << "[DEBUG] Float value: ";
+        value->print(llvm::errs());
+        std::cout << std::endl;
+        
         // Convert float to double for printf (printf expects double for %f)
         llvm::Value* doubleVal = builder->CreateFPExt(value, llvm::Type::getDoubleTy(*TheContext), "float_to_double");
         formatStr = createGlobalString("%g\n");  // %g removes trailing zeros
@@ -445,6 +457,15 @@ llvm::Value* CodeGenerator::generatePrintCall(llvm::Value* value) {
 
     llvm::Function* printfFunc = TheModule->getFunction("printf");
     std::cout << "Calling printf function\n";
+    
+    // Debug: Print the arguments being passed to printf
+    std::cout << "[DEBUG] Printf arguments:" << std::endl;
+    for (size_t i = 0; i < printfArgs.size(); ++i) {
+        std::cout << "[DEBUG] Arg " << i << ": ";
+        printfArgs[i]->print(llvm::errs());
+        std::cout << std::endl;
+    }
+    
     return builder->CreateCall(printfFunc, printfArgs);
 }
 
