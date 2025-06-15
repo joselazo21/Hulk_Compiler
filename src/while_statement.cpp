@@ -48,7 +48,7 @@ llvm::Value* WhileStatement::codegen(CodeGenerator& generator) {
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(generator.getContext(), "while.end", func);
 
     llvm::Value* resultPtr = generator.getBuilder()->CreateAlloca(
-        llvm::Type::getInt32Ty(generator.getContext()), nullptr, "while.result");
+        llvm::Type::getFloatTy(generator.getContext()), nullptr, "while.result");
 
     generator.getBuilder()->CreateBr(condBB);
 
@@ -66,10 +66,12 @@ llvm::Value* WhileStatement::codegen(CodeGenerator& generator) {
     } else {
         // For other types, convert to i32 first, then compare
         if (condVal->getType()->isDoubleTy() || condVal->getType()->isFloatTy()) {
-            condVal = generator.getBuilder()->CreateFPToSI(condVal, llvm::Type::getInt32Ty(generator.getContext()), "fp_to_int");
+            condVal = generator.getBuilder()->CreateFCmpONE(condVal, 
+                llvm::ConstantFP::get(condVal->getType(), 0.0), "whilecond");
+        } else {
+            condVal = generator.getBuilder()->CreateICmpNE(
+                condVal, llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 0), "whilecond");
         }
-        condVal = generator.getBuilder()->CreateICmpNE(
-            condVal, llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 0), "whilecond");
     }
     
     generator.getBuilder()->CreateCondBr(condVal, bodyBB, endBB);

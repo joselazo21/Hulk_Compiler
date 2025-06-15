@@ -107,8 +107,8 @@ public:
     
     // Context object access methods
     void setContextObject(IContext* ctx) { contextObject = ctx; }
-    // Cambia para devolver el contexto actual (de la pila si existe)
-    IContext* getContextObject() { return currentContext(); }
+    // Return the original global context object, not the current context from the stack
+    IContext* getContextObject() { return contextObject; }
     
     // Scope management methods
     void pushScope();

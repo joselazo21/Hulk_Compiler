@@ -125,8 +125,14 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     llvm::Module* module = generator.getModule();
     llvm::IRBuilder<>* builder = generator.getBuilder();
 
-    IContext* currentContext = generator.currentContext();
-    llvm::StructType* structType = currentContext->getType(typeName);
+    // Use the global context object to look up types, not the current context from the stack
+    IContext* globalContext = generator.getContextObject();
+    if (!globalContext) {
+        SEMANTIC_ERROR("Global context is null", location);
+        return nullptr;
+    }
+    
+    llvm::StructType* structType = globalContext->getType(typeName);
 
     if (!structType) {
         SEMANTIC_ERROR("Type '" + typeName + "' not found", location);
@@ -134,17 +140,17 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     }
 
     // Get the field count and names
-    int totalFields = currentContext->getFieldCount(typeName);
+    int totalFields = globalContext->getFieldCount(typeName);
 
     // Get parent type and parent argument expressions if any
-    std::string parentType = currentContext->getParentType(typeName);
+    std::string parentType = globalContext->getParentType(typeName);
     int parentFieldCount = 0;
     std::vector<llvm::Value*> parentArgValues;
     if (parentType != "Object") {
         // Try to get parent argument expressions from the AST
         // We need to access the TypeDefinition node for this type to get parentArgs
         // For now, we assume the field order is: [parent fields][own fields]
-        parentFieldCount = currentContext->getFieldCount(parentType);
+        parentFieldCount = globalContext->getFieldCount(parentType);
     }
 
     // Create a new struct type that includes runtime type information
@@ -200,9 +206,8 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
 
     // Get the TypeDefinition AST node for this type
     TypeDefinition* typeDef = nullptr;
-    // IContext* currentContext = generator.getContextObject(); // Removed redeclaration
-    if (currentContext) {
-        typeDef = currentContext->getTypeDefinition(typeName);
+    if (globalContext) {
+        typeDef = globalContext->getTypeDefinition(typeName);
     }
     std::vector<Expression*> parentArgs;
     if (typeDef && parentType != "Object") {
@@ -279,7 +284,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             generator.popScope();
             return nullptr;
         }
-        std::string fieldName = currentContext->getFieldName(typeName, i);
+        std::string fieldName = globalContext->getFieldName(typeName, i);
         llvm::Value* indices[2] = {
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), i + 1) // +1 to account for type ID field
@@ -295,7 +300,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
 
     // Assign own fields (after parent fields)
     // Get the TypeDefinition to access field initialization expressions
-    TypeDefinition* typeDef_local = currentContext->getTypeDefinition(typeName);
+    TypeDefinition* typeDef_local = globalContext->getTypeDefinition(typeName);
     
     int ownFieldStartIdx = parentFieldCount;
     int numOwnFields = totalFields - parentFieldCount;
@@ -310,7 +315,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     for (int i = 0; i < numOwnFields; ++i) {
         llvm::Value* value = nullptr;
         int fieldIdx = ownFieldStartIdx + i;
-        std::string fieldName = currentContext->getFieldName(typeName, fieldIdx);
+        std::string fieldName = globalContext->getFieldName(typeName, fieldIdx);
         
         std::cout << "[DEBUG] Processing field " << i << " (fieldIdx=" << fieldIdx << ", fieldName=" << fieldName << ")" << std::endl;
         

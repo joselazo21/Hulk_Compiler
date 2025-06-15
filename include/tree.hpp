@@ -501,6 +501,11 @@ public:
 class ReturnStatement : public Statement {
 private:
     Expression* value;
+    
+    // Helper methods for type conversion
+    llvm::Value* convertValueToType(CodeGenerator& generator, llvm::Value* value, llvm::Type* targetType);
+    llvm::Value* getDefaultValueForType(CodeGenerator& generator, llvm::Type* type);
+    
 public:
     ReturnStatement(const SourceLocation& loc, Expression* value);
     ReturnStatement(Expression* value);

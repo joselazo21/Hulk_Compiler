@@ -57,8 +57,8 @@ WHITESPACE [ \t\r]+
 "<"             { printf("<LT>\n"); return '<'; }
 ">"             { printf("<GT>\n"); return '>'; }
 "%"             { printf("<MOD>\n"); return '%'; }
-"&&"            { printf("<AND>\n"); return AND; }
-"||"            { printf("<OR>\n"); return OR; }
+"&"             { printf("<AND>\n"); return AND; }
+"|"             { printf("<OR>\n"); return OR; }
 
 {NUMBER}        { printf("<NUMBER:%s>\n", yytext); yylval.dval = atof(yytext); return NUMBER; }
 {ID}            { printf("<ID:%s>\n", yytext); yylval.sval = strdup(yytext); return ID; }
@@ -85,7 +85,6 @@ WHITESPACE [ \t\r]+
 "."             { printf("<DOT>\n"); return '.'; }
 "["             { printf("<LBRACKET>\n"); return '['; }
 "]"             { printf("<RBRACKET>\n"); return ']'; }
-"|"             { printf("<PIPE>\n"); return '|'; }
 .               { 
                     printf("Error: Carácter no reconocido '%s' en línea %d, columna %d\n", 
                            yytext, yylineno, yylloc.first_column);

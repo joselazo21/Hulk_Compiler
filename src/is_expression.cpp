@@ -112,6 +112,10 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
     if (actualTypeName.find("struct.") == 0) {
         actualTypeName = actualTypeName.substr(7);
     }
+    // Remove "runtime." prefix if present (for objects created with runtime type info)
+    else if (actualTypeName.find("runtime.") == 0) {
+        actualTypeName = actualTypeName.substr(8);
+    }
     
     std::cout << "[DEBUG] IsExpression::codegen - Actual type: " << actualTypeName << ", Target type: " << typeName << std::endl;
     

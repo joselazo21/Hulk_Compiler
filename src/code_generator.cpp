@@ -605,15 +605,21 @@ void CodeGenerator::popScope() {
 }
 
 IContext* CodeGenerator::currentContext() {
+    std::cout << "[DEBUG] CodeGenerator::currentContext() called, contextStack.size()=" << contextStack.size() << std::endl;
+    
     // First try the stack
     if (!contextStack.empty()) {
-        return contextStack.back();
+        IContext* stackContext = contextStack.back();
+        std::cout << "[DEBUG] Returning context from stack: " << stackContext << std::endl;
+        return stackContext;
     }
     // Then try contextObject
     if (contextObject) {
+        std::cout << "[DEBUG] Returning contextObject: " << contextObject << std::endl;
         return contextObject;
     }
     // Finally, create a new context if needed
+    std::cout << "[DEBUG] Creating new context as fallback" << std::endl;
     contextObject = new Context(nullptr, TheContext);
     return contextObject;
 }

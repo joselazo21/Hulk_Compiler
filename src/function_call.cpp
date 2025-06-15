@@ -200,10 +200,13 @@ llvm::Value* FunctionCall::codegen(CodeGenerator& generator) {
         llvm::Value* argValue = args[i]->codegen(generator);
         if (!argValue) return nullptr;
 
-        // Para range, permite solo i32
+        // Para range, convierte float a i32 si es necesario
         if (func_name == "range") {
-            if (!argValue->getType()->isIntegerTy(32)) {
-                SEMANTIC_ERROR("Arguments to range must be integers", location);
+            if (argValue->getType()->isFloatTy()) {
+                // Convert float to i32
+                argValue = generator.getBuilder()->CreateFPToSI(argValue, llvm::Type::getInt32Ty(generator.getContext()), "float_to_int");
+            } else if (!argValue->getType()->isIntegerTy(32)) {
+                SEMANTIC_ERROR("Arguments to range must be integers or numbers", location);
                 return nullptr;
             }
         } else if (func_name == "sqrt" || func_name == "sin" || func_name == "cos" || func_name == "pow") {

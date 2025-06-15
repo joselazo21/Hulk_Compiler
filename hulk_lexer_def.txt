@@ -44,8 +44,8 @@
 "<"               { printf("<LT>\n"); return '<'; }
 ">"               { printf("<GT>\n"); return '>'; }
 "%"               { printf("<MOD>\n"); return '%'; }
-"&&"              { printf("<AND>\n"); return AND; }
-"||"              { printf("<OR>\n"); return OR; }
+"&"               { printf("<AND>\n"); return AND; }
+"|"               { printf("<OR>\n"); return OR; }
 
 # Operadores y delimitadores
 ","               { printf("<COMMA>\n"); return ','; }
@@ -64,7 +64,6 @@
 "."               { printf("<DOT>\n"); return '.'; }
 "["               { printf("<LBRACKET>\n"); return '['; }
 "]"               { printf("<RBRACKET>\n"); return ']'; }
-"|"               { printf("<PIPE>\n"); return '|'; }
 
 # Números y literales
 [0-9]+(\.[0-9]+)? { printf("<NUMBER:%s>\n", yytext); yylval.dval = atof(yytext); return NUMBER; }

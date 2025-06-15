@@ -1,6 +1,7 @@
 #include "tree.hpp"
 #include <sstream>
 #include <iostream>
+#include <set>
 #include <error_handler.hpp>
 
 Context::Context(IContext* parent, llvm::LLVMContext* llvmContext)
@@ -203,13 +204,36 @@ bool Context::addType(const std::string& name, llvm::StructType* type) {
 }
 
 llvm::StructType* Context::getType(const std::string& name) {
+    std::cout << "[DEBUG] Context::getType called for '" << name << "' on context " << this << std::endl;
+    
+    // Add null check for this pointer
+    if (this == nullptr) {
+        std::cerr << "[ERROR] Context::getType called with null this pointer!" << std::endl;
+        return nullptr;
+    }
+    
+    // First check current context
     auto it = types.find(name);
     if (it != types.end()) {
+        std::cout << "[DEBUG] Found type '" << name << "' in current context" << std::endl;
         return it->second;
     }
-    if (parent) {
-        return parent->getType(name);
+    
+    // Then check parent context, but avoid infinite recursion by limiting depth
+    static thread_local int recursionDepth = 0;
+    const int MAX_RECURSION_DEPTH = 10;
+    
+    if (parent && recursionDepth < MAX_RECURSION_DEPTH) {
+        std::cout << "[DEBUG] Type '" << name << "' not found in current context, checking parent" << std::endl;
+        recursionDepth++;
+        llvm::StructType* result = parent->getType(name);
+        recursionDepth--;
+        return result;
+    } else if (recursionDepth >= MAX_RECURSION_DEPTH) {
+        std::cerr << "[ERROR] Maximum recursion depth reached in context chain for type '" << name << "'" << std::endl;
+        return nullptr;
     } else {
+        std::cout << "[DEBUG] Type '" << name << "' not found and no parent context" << std::endl;
         return nullptr;
     }
 }
