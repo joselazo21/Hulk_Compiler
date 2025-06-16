@@ -61,8 +61,6 @@ CodeGenerator::CodeGenerator(llvm::LLVMContext* extContext, Context* extContextO
 CodeGenerator::~CodeGenerator() {
     std::cout << "[LOG] CodeGenerator::~CodeGenerator() START\n";
 
-    // Delete resources owned by CodeGenerator
-    // Builder and TheModule are created with 'new' in the constructor
     delete Builder; // Builder should be deleted before TheModule if it holds references
     Builder = nullptr;
 
@@ -70,15 +68,11 @@ CodeGenerator::~CodeGenerator() {
                       // This operation REQUIRES TheContext (llvmCtx from main) to be alive.
     TheModule = nullptr;
 
-    // Clean up any remaining child contexts on the stack.
-    // This is crucial if generateCode might have exited prematurely (e.g., due to an exception)
-    // without properly unwinding the context stack through popScope.
     std::cout << "[LOG] CodeGenerator::~CodeGenerator(), cleaning contextStack, current size=" << contextStack.size() << "\n";
     while (!contextStack.empty()) {
         IContext* toDelete = contextStack.back();
         contextStack.pop_back();
-        // contextObject is the globalContext passed from main; it's not owned by CodeGenerator.
-        // Only child contexts created by pushScope (and thus on the stack) are owned here.
+
         if (toDelete != contextObject) { // Ensure we don't delete the global context instance from main
             std::cout << "[LOG] CodeGenerator::~CodeGenerator(), deleting context from stack: " << toDelete << "\n";
             delete toDelete;
@@ -87,9 +81,6 @@ CodeGenerator::~CodeGenerator() {
         }
     }
     std::cout << "[LOG] CodeGenerator::~CodeGenerator() END\n";
-    // Note:
-    // - TheContext (llvmCtx) is owned by main.cpp and should be deleted there, *after* this destructor runs.
-    // - contextObject (globalContext) is owned by main.cpp and should be deleted there.
 }
 
 
@@ -619,9 +610,6 @@ void CodeGenerator::popScope() {
     }
     // After popping, ensure contextObject is not dangling
     if (contextStack.empty()) {
-        // contextObject should always be the original globalContext passed in constructor
-        // Do NOT delete or replace it here!
-        // Just leave it as is.
     }
 }
 
@@ -970,15 +958,13 @@ llvm::Function* CodeGenerator::declareRangeFunction() {
     return func;
 }
 
-// Obtener o crear una variable global para un iterador específico
 llvm::GlobalVariable* CodeGenerator::getIteratorGlobalVariable(const std::string& iterName) {
     std::string globalName = getIteratorGlobalName(iterName);
     
     std::cout << "[DEBUG] getIteratorGlobalVariable called for: " << iterName 
               << ", globalName: " << globalName << std::endl;
     
-    // Store the global in a static map to ensure we always return the same instance
-    // This prevents LLVM from creating duplicates with numeric suffixes
+
     static std::map<std::string, llvm::GlobalVariable*> iteratorGlobals;
     
     // First check if it's in our map
@@ -1024,8 +1010,7 @@ llvm::GlobalVariable* CodeGenerator::getIteratorGlobalVariable(const std::string
     // Store the new global in our map
     iteratorGlobals[globalName] = newGlobal;
     
-    // DO NOT call implementIteratorFunctions here - it creates circular dependency!
-    // Just create the function declarations if they don't exist
+
     std::string nextName = getIterNextFunctionName(iterName);
     std::string currName = getIterCurrentFunctionName(iterName);
     
@@ -1046,23 +1031,6 @@ llvm::GlobalVariable* CodeGenerator::getIteratorGlobalVariable(const std::string
     
     return newGlobal;
 }
-
-// === EJEMPLO DE USO DESDE LetIn::codegen (en tree.cpp) ===
-/*
-if (isIter) {
-    // Suponiendo que val es el resultado de range(start, end)
-    // y varName es el nombre del iterador (ej: "__iter_x")
-    
-    // 1. Obtener o crear la variable global para este iterador
-    llvm::GlobalVariable* globalIter = generator.getIteratorGlobalVariable(varName);
-    
-    // 2. Almacenar el valor del rango en la global
-    generator.getBuilder()->CreateStore(val, globalIter);
-    
-    // 3. Generar las funciones next/current para este iterador
-    generator.implementIteratorFunctions(varName);
-}
-*/
 
 // Declare and implement the size method for range type
 void CodeGenerator::declareAndImplementRangeSizeMethod() {
@@ -1098,11 +1066,6 @@ void CodeGenerator::declareAndImplementRangeSizeMethod() {
     llvm::Value* endPtr = sizeBuilder.CreateStructGEP(rangeType, rangePtr, 1, "end.ptr");
     llvm::Value* endVal = sizeBuilder.CreateLoad(llvm::Type::getInt32Ty(*TheContext), endPtr, "end");
     
-    // For vectors converted to ranges, the size should be the end value itself
-    // since ranges are created from 0 to vector.size()
-    
-    // For now, just use the end value as the size
-    // This is correct because when we create a range for a vector, we set the end to the vector size
     llvm::Value* size = endVal;
     
     // Debug print to verify the size
@@ -1116,37 +1079,3 @@ void CodeGenerator::declareAndImplementRangeSizeMethod() {
     }
 }
 
-// Example: Add this method to CodeGenerator if not present
-llvm::Value* CodeGenerator::generateBinaryOp(llvm::Value* left, llvm::Value* right, const std::string& op) {
-    if (op == "@") {
-        // Ensure both operands are i8* (string)
-        llvm::Value* leftStr = left;
-        llvm::Value* rightStr = right;
-
-        if (left->getType()->isIntegerTy(32)) {
-            leftStr = intToString(left);
-        } else if (!(left->getType()->isPointerTy() && left->getType()->getPointerElementType()->isIntegerTy(8))) {
-            SEMANTIC_ERROR("Left operand of @ must be string or int", SourceLocation());
-            return nullptr;
-        }
-
-        if (right->getType()->isIntegerTy(32)) {
-            rightStr = intToString(right);
-        } else if (!(right->getType()->isPointerTy() && right->getType()->getPointerElementType()->isIntegerTy(8))) {
-            SEMANTIC_ERROR("Right operand of @ must be string or int", SourceLocation());
-            return nullptr;
-        }
-
-        // Declare string_concat if not already present
-        llvm::Function* concatFunc = TheModule->getFunction("string_concat");
-        if (!concatFunc) {
-            llvm::Type* i8PtrTy = llvm::Type::getInt8PtrTy(*TheContext);
-            llvm::FunctionType* concatTy = llvm::FunctionType::get(i8PtrTy, {i8PtrTy, i8PtrTy}, false);
-            concatFunc = llvm::Function::Create(concatTy, llvm::Function::ExternalLinkage, "string_concat", TheModule);
-        }
-        return Builder->CreateCall(concatFunc, {leftStr, rightStr}, "concat_result");
-    }
-
-    // ...existing code for other operators...
-    return nullptr; // Or your existing logic
-}

@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Runtime type checking function
-// Returns 1 if object is of the specified type (or subtype), 0 otherwise
 int __hulk_runtime_type_check(void* object, const char* target_type_name) {
     if (!object || !target_type_name) {
         return 0;
@@ -22,18 +20,9 @@ int __hulk_runtime_type_check(void* object, const char* target_type_name) {
         return 1;
     }
     
-    // Check inheritance relationships
-    // For now, we implement a simple inheritance check
-    // In a more sophisticated implementation, you'd store inheritance info
-    
-    // Special case: all types inherit from Object
     if (strcmp(target_type_name, "Object") == 0) {
         return 1;
     }
-    
-    // TODO: Implement proper inheritance chain traversal
-    // This would require storing parent type information in the runtime
-    // For now, we only support direct type matches
     
     return 0;
 }
@@ -47,9 +36,6 @@ void __hulk_runtime_error(const char* error_message) {
     }
     exit(1);
 }
-
-// Enhanced runtime type checking with inheritance support
-// This version requires inheritance information to be stored in objects
 typedef struct TypeInfo {
     char* type_name;
     struct TypeInfo* parent_type;

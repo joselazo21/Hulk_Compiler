@@ -98,8 +98,6 @@ public:
     llvm::AllocaInst* createEntryBlockAlloca(llvm::Function* function, llvm::StringRef varName);
     llvm::AllocaInst* createEntryBlockAlloca(llvm::Function* function, const std::string& varName, llvm::Type* type);
     llvm::Value* convertToBoolean(llvm::Value* value);
-    llvm::Value* generateBinaryOp(llvm::Value* left, llvm::Value* right, 
-                                 const std::string& op);
     
     bool generateCode(Node* root);
     void dumpCode();

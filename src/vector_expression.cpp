@@ -93,26 +93,12 @@ bool VectorExpression::Validate(IContext* context) {
 
 llvm::Value* VectorExpression::codegen(CodeGenerator& generator) {
     if (isGenerator) {
-        // Generator vectors are transformed into LetIn expressions by the parser
-        // This should not be called directly for generator vectors
-        // Instead, the parser transforms [expr | var in iterable] into:
-        // let __iter_name = iterable, __result_name = [] in 
-        //   while __iter_name.next() do
-        //     let var = __iter_name.current() in
-        //       __result_name.append(expr)
-        
-        // For now, we'll generate a simple range-based iteration
-        // This is a fallback implementation that shouldn't normally be reached
-        
         // Generate the iterable (should be a range or similar)
         llvm::Value* iterableVal = iterable->codegen(generator);
         if (!iterableVal) {
             SEMANTIC_ERROR("Failed to generate code for iterable in generator vector", location);
             return nullptr;
         }
-        
-        // For simplicity, assume the iterable is a range and return it
-        // The actual iteration logic should be handled by the transformed LetIn structure
         return iterableVal;
     } else {
         // Para vectores explícitos, evaluamos los elementos y almacenamos los valores
