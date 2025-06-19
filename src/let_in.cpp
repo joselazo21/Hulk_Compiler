@@ -159,39 +159,54 @@ bool LetIn::Validate(IContext* context) {
             // Check if it's an if expression
             else if (auto* ifExpr = dynamic_cast<IfExpression*>(binding.expr)) {
                 // For if expressions, we need to infer the common type of both branches
-                // For now, we'll check if both branches are new expressions of compatible types
+                std::string thenTypeName;
+                std::string elseTypeName;
+                
+                // Determine the type of the then branch
                 if (auto* thenNew = dynamic_cast<NewExpression*>(ifExpr->getThenExpr())) {
-                    if (auto* elseNew = dynamic_cast<NewExpression*>(ifExpr->getElseExpr())) {
-                        std::string thenType = thenNew->getTypeName();
-                        std::string elseType = elseNew->getTypeName();
-                        
-                        // Find common base type
-                        std::string commonType = findCommonBaseType(thenType, elseType, letContext);
-                        
-                        if (!commonType.empty() && commonType != "Object") {
-                            // Check if the common type is registered (even if struct is nullptr during validation)
-                            if (letContext->hasType(commonType)) {
-                                // During validation, use placeholder type but keep the correct type name
-                                actualType = llvm::Type::getFloatTy(*llvmCtx);
-                                actualTypeName = commonType;
-                            } else {
-                                // Even if struct type is not found, we can still use the common type name
-                                actualType = llvm::Type::getFloatTy(*llvmCtx);
-                                actualTypeName = commonType;
-                            }
-                        } else {
-                            actualType = llvm::Type::getFloatTy(*llvmCtx);
-                            actualTypeName = "Number";
-                        }
-                    } else {
-                        actualType = llvm::Type::getFloatTy(*llvmCtx);
-                        actualTypeName = "Number";
-                        std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression but else branch is not NewExpression, defaulting to Number" << std::endl;
+                    thenTypeName = thenNew->getTypeName();
+                } else if (auto* thenVar = dynamic_cast<Variable*>(ifExpr->getThenExpr())) {
+                    thenTypeName = letContext->getVariableTypeName(thenVar->getName());
+                    if (thenTypeName.empty()) {
+                        thenTypeName = "Number"; // Default fallback
                     }
+                } else {
+                    thenTypeName = "Number"; // Default for other expressions
+                }
+                
+                // Determine the type of the else branch
+                if (auto* elseNew = dynamic_cast<NewExpression*>(ifExpr->getElseExpr())) {
+                    elseTypeName = elseNew->getTypeName();
+                } else if (auto* elseVar = dynamic_cast<Variable*>(ifExpr->getElseExpr())) {
+                    elseTypeName = letContext->getVariableTypeName(elseVar->getName());
+                    if (elseTypeName.empty()) {
+                        elseTypeName = "Number"; // Default fallback
+                    }
+                } else {
+                    elseTypeName = "Number"; // Default for other expressions
+                }
+                
+                std::cout << "[DEBUG] LetIn::Validate - IfExpression then type: " << thenTypeName << ", else type: " << elseTypeName << std::endl;
+                
+                // Find common base type
+                std::string commonType = findCommonBaseType(thenTypeName, elseTypeName, letContext);
+                
+                std::cout << "[DEBUG] LetIn::Validate - Common type found: " << commonType << std::endl;
+                
+                if (!commonType.empty() && commonType != "Object") {
+                    // Use the common type
+                    actualType = llvm::Type::getFloatTy(*llvmCtx);
+                    actualTypeName = commonType;
+                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression with common type " << commonType << std::endl;
+                } else if (commonType == "Object") {
+                    // If the only common type is Object, use it
+                    actualType = llvm::Type::getFloatTy(*llvmCtx);
+                    actualTypeName = "Object";
+                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression with Object as common type" << std::endl;
                 } else {
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = "Number";
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression but then branch is not NewExpression, defaulting to Number" << std::endl;
+                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression but no common type found, defaulting to Number" << std::endl;
                 }
             }
             // Check if it's an as expression (type casting)
@@ -557,6 +572,10 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             if (!semanticTypeName.empty()) {
                 generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
                 std::cout << "[DEBUG] LetIn::codegen - Stored semantic type name '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
+            } else if (!binding.typeAnnotation.empty()) {
+                // Use the type annotation if no semantic type was inferred
+                generator.getContextObject()->setVariableTypeName(varName, binding.typeAnnotation);
+                std::cout << "[DEBUG] LetIn::codegen - Used type annotation '" << binding.typeAnnotation << "' for variable '" << varName << "'" << std::endl;
             }
         }
     }

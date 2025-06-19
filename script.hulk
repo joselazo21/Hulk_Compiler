@@ -1,3 +1,153 @@
+type Animal(name: String) {
+    name: String = name;
+    energy: Number = 100;
+    
+    speak() : String => "Some generic animal sound";
+    move() : String => self.name @@ " moves slowly";
+    eat() : Number => {
+        self.energy := self.energy + 10;
+        print(self.name @@ " ate something. Energy: " @ self.energy);
+        self.energy;
+    };
+    status() : String => self.name @@ " has " @ self.energy @@ " energy";
+}
+
+type Mammal inherits Animal {
+    fur_color: String = "brown";
+    
+    speak() : String => "Mammal sound";
+    give_birth() : String => self.name @@ " gave birth to offspring";
+    regulate_temperature() : String => "Body temperature regulated";
+}
+
+type Dog inherits Mammal {
+    breed: String = "mixed";
+    
+    speak() : String => "Woof! " @@ base();
+    move() : String => self.name @@ " runs quickly on four legs";
+    fetch() : String => self.name @@ " fetches the ball";
+}
+
+type Cat inherits Mammal {
+    lives: Number = 9;
+    
+    speak() : String => "Meow! " @@ base();
+    move() : String => self.name @@ " prowls silently";
+    climb() : String => self.name @@ " climbs the tree";
+    lose_life() : Number => {
+        self.lives := self.lives - 1;
+        print(self.name @@ " lost a life. Lives remaining: " @ self.lives);
+        self.lives;
+    };
+}
+
+let dog = new Dog("Buddy") in
+let cat = new Cat("Whiskers") in
+let generic_mammal = new Mammal("Unknown") in {
+    print("=== Dog Tests ===");
+    print(dog.speak());
+    print(dog.move());
+    print(dog.fetch());
+    dog.eat();
+    print(dog.status());
+    
+    print("\n=== Cat Tests ===");
+    print(cat.speak());
+    print(cat.move());
+    print(cat.climb());
+    cat.lose_life();
+    cat.eat();
+    print(cat.status());
+};
+
+function fibonacci_advanced(n: Number, memo: String) : Number =>
+    if (n <= 1) {
+        print("Base case reached: " @ memo);
+        n;
+    } else {
+        print("Computing fib(" @ n @ ") - " @ memo);
+        fibonacci_advanced(n-1, memo @ "->left") + fibonacci_advanced(n-2, memo @ "->right");
+    };
+
+let result = fibonacci_advanced(8, "start") in print("Final result: " @ result);
+
+function apply_operation(x: Number, y: Number, op: Number) : Number =>
+    if (op == 1) x + y
+    elif (op == 2) x - y
+    elif (op == 3) x * y
+    elif (op == 4) x / y
+    else 0;
+
+function batch_operations(a: Number, b: Number) : Number {
+    let sum_result = apply_operation(a, b, 1) in
+    let diff_result = apply_operation(a, b, 2) in
+    let mult_result = apply_operation(a, b, 3) in
+    let div_result = apply_operation(a, b, 4) in {
+        print("Sum: " @ sum_result);
+        print("Difference: " @ diff_result);
+        print("Product: " @ mult_result);
+        print("Division: " @ div_result);
+        sum_result + diff_result + mult_result + div_result;
+    };
+}
+
+batch_operations(15.5, 3.2);
+
+function is_even(n: Number) : Number =>
+    if (n == 0) 1
+    elif (n == 1) 0
+    else is_odd(n - 1);
+
+function is_odd(n: Number) : Number =>
+    if (n == 0) 0
+    elif (n == 1) 1
+    else is_even(n - 1);
+
+for (i in range(0, 10)) {
+    print("Number " @ i @ " is even: " @ is_even(i));
+    print("Number " @ i @ " is odd: " @ is_odd(i));
+};
+
+function power(bases: Number, exp: Number) : Number =>
+    if (exp == 0) 1
+    elif (exp == 1) bases
+    else bases * power(bases, exp - 1);
+
+function sum_of_powers(n: Number) : Number =>
+    if (n <= 0) 0
+    else power(n, 2) + sum_of_powers(n - 1);
+
+let powers_sum = sum_of_powers(5) in {
+    print("Sum of squares from 1 to 5: " @ powers_sum);
+    let factorial_5 : Number = fact(5) in
+    print("Factorial 5: " @ factorial_5);
+};
+
+function fact(n: Number) : Number =>
+    if (n <= 1) 1
+    else n * fact(n - 1);
+
+
+function complex_calculator(x: Number, y: Number, z: Number) : Number {
+    let temp1 : Number = if (x > y) x else y in
+    let temp2 : Number = if (temp1 > z) temp1 else z in
+    let result: Number = 0 in {
+        if (temp2 % 2 == 0) {
+            result := temp2 * 2;
+            print("Even max, doubled: " @ result);
+        } else {
+            result := temp2 * 3 + 1;
+            print("Odd max, 3n+1: " @ result);
+        };
+        
+        for (i in range(1, 4)) {
+            print("After adding " @ i @ "^2: " @ result);
+            result := result + power(i, 2);
+            
+        };
+    };
+}
+
 type Flyable {
     altitude: Number = 0;
     fly() : String => "Flying at altitude " @ self.altitude;
@@ -36,7 +186,7 @@ type Fish inherits Animal {
     };
 }
 
-type Vehicle(brand, model) {
+type Vehicle(brand: String , model: String) {
     brand: String = brand;
     model: String = model;
     speed: Number = 0;
@@ -69,9 +219,9 @@ type Motorcycle inherits Vehicle {
 }
 
 let vehicles_test = {
-    let car = new Car("Toyota", "Camry") in
-    let bike = new Motorcycle("Harley", "Davidson") in
-    let generic_vehicle = new Vehicle("Generic", "Brand") in {
+    let car : Car = new Car("Toyota", "Camry") in
+    let bike : Motorcycle = new Motorcycle("Harley", "Davidson") in
+    let generic_vehicle : Vehicle = new Vehicle("Generic", "Brand") in {
         
         print("=== Type Checking Tests ===");
         print("Car is Vehicle: " @ (if (car is Vehicle) "true" else "false"));
@@ -82,17 +232,14 @@ let vehicles_test = {
         print("Bike is Motorcycle: " @ (if (bike is Motorcycle) "true" else "false"));
         print("Bike is Car: " @ (if (bike is Car) "true" else "false"));
         
-        # Polymorphic behavior
         let current_vehicle : Vehicle = if (1 == 1) car else bike in {
             print("Selected vehicle info: " @ current_vehicle.info());
             current_vehicle.accelerate(30);
             print("After acceleration: " @ current_vehicle.info());
         };
         
-        # Procesar cada vehículo individualmente sin usar lista
         print("\nProcessing vehicles one by one:");
         
-        # Procesar el carro
         print("\nVehicle 0:");
         print(car.start());
         car.accelerate(25);

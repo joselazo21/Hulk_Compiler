@@ -162,9 +162,18 @@ bool NewExpression::Validate(IContext* context) {
                               << "', expectedType: '" << expectedType << "'" << std::endl;
                 }
                 
+                // Extract just the parameter name if it contains type annotation
+                std::string paramName = constructorParams[i];
+                size_t paramColonPos = paramName.find(':');
+                if (paramColonPos != std::string::npos) {
+                    paramName = paramName.substr(0, paramColonPos);
+                    // Remove any trailing whitespace
+                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                }
+                
                 // Check if this field corresponds to the constructor parameter
-                if (actualFieldName == constructorParams[i]) {
-                    std::cout << "[DEBUG] Found matching field for param '" << constructorParams[i] << "'" << std::endl;
+                if (actualFieldName == paramName) {
+                    std::cout << "[DEBUG] Found matching field for param '" << paramName << "'" << std::endl;
                     break;
                 }
             }
@@ -173,8 +182,17 @@ bool NewExpression::Validate(IContext* context) {
             // it might be because the parameter name doesn't match the field name exactly
             // In this case, we should infer the type from the parameter name itself
             if (!foundField) {
+                // Extract just the parameter name if it contains type annotation
+                std::string paramName = constructorParams[i];
+                size_t paramColonPos = paramName.find(':');
+                if (paramColonPos != std::string::npos) {
+                    paramName = paramName.substr(0, paramColonPos);
+                    // Remove any trailing whitespace
+                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                }
+                
                 // For the first parameter named "name", it's typically String
-                if (constructorParams[i] == "name") {
+                if (paramName == "name") {
                     expectedType = "String";
                 } else {
                     // For other parameters, try to infer from context or keep default
@@ -358,18 +376,27 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             return nullptr;
         }
         
+        // Extract just the parameter name if it contains type annotation
+        std::string paramName = constructorParams[i];
+        size_t colonPos = paramName.find(':');
+        if (colonPos != std::string::npos) {
+            paramName = paramName.substr(0, colonPos);
+            // Remove any trailing whitespace
+            paramName.erase(paramName.find_last_not_of(" \t") + 1);
+        }
+        
         // Create an alloca for this parameter
         llvm::AllocaInst* alloca = builder->CreateAlloca(
             argValue->getType(), 
             nullptr, 
-            constructorParams[i]
+            paramName
         );
         
         // Store the value
         builder->CreateStore(argValue, alloca);
         
         // Add to the symbol table
-        generator.setNamedValue(constructorParams[i], alloca);
+        generator.setNamedValue(paramName, alloca);
     }
 
     // Now evaluate parent arguments with constructor parameters in scope
@@ -510,15 +537,24 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
         
         // First priority: try to use constructor parameter if available
         if (i < static_cast<int>(constructorParams.size())) {
-            std::cout << "[DEBUG] Using constructor parameter " << constructorParams[i] << " for field " << fieldName << std::endl;
+            // Extract just the parameter name if it contains type annotation
+            std::string paramName = constructorParams[i];
+            size_t colonPos = paramName.find(':');
+            if (colonPos != std::string::npos) {
+                paramName = paramName.substr(0, colonPos);
+                // Remove any trailing whitespace
+                paramName.erase(paramName.find_last_not_of(" \t") + 1);
+            }
+            
+            std::cout << "[DEBUG] Using constructor parameter " << paramName << " for field " << fieldName << std::endl;
             // Load from the alloca we created earlier
-            llvm::Value* alloca = generator.getNamedValue(constructorParams[i]);
+            llvm::Value* alloca = generator.getNamedValue(paramName);
             if (alloca && llvm::isa<llvm::AllocaInst>(alloca)) {
                 llvm::AllocaInst* allocaInst = llvm::cast<llvm::AllocaInst>(alloca);
-                value = builder->CreateLoad(allocaInst->getAllocatedType(), allocaInst, constructorParams[i]);
+                value = builder->CreateLoad(allocaInst->getAllocatedType(), allocaInst, paramName);
                 std::cout << "[DEBUG] Successfully loaded constructor parameter value" << std::endl;
             } else {
-                std::cout << "[DEBUG] Failed to find alloca for constructor parameter " << constructorParams[i] << std::endl;
+                std::cout << "[DEBUG] Failed to find alloca for constructor parameter " << paramName << std::endl;
             }
         }
         

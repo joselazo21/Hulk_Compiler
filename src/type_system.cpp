@@ -301,7 +301,15 @@ const Type* TypeChecker::inferMethodReturnType(const std::string& typeName, cons
                 // Add method parameters to the context
                 const auto& params = method.second.first;
                 for (const auto& param : params) {
-                    methodContext->addVariable(param);
+                    // Extract just the parameter name if it contains type annotation
+                    std::string paramName = param;
+                    size_t colonPos = paramName.find(':');
+                    if (colonPos != std::string::npos) {
+                        paramName = paramName.substr(0, colonPos);
+                        // Remove any trailing whitespace
+                        paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                    }
+                    methodContext->addVariable(paramName);
                 }
                 
                 // Infer the type of the method body

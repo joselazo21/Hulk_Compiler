@@ -154,7 +154,15 @@ bool TypeDefinition::Validate(IContext* context) {
             // Create new context for method with parameters
             IContext* methodContext = typeContext->createChildContext();
             for (const auto& param : method.second.params) {
-                methodContext->addVariable(param);
+                // Extract just the parameter name if it contains type annotation
+                std::string paramName = param;
+                size_t colonPos = paramName.find(':');
+                if (colonPos != std::string::npos) {
+                    paramName = paramName.substr(0, colonPos);
+                    // Remove any trailing whitespace
+                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                }
+                methodContext->addVariable(paramName);
             }
             
             if (method.second.body && !method.second.body->Validate(methodContext)) {
@@ -169,7 +177,15 @@ bool TypeDefinition::Validate(IContext* context) {
             // Create new context for method with parameters
             IContext* methodContext = typeContext->createChildContext();
             for (const auto& param : method.second.first) {
-                methodContext->addVariable(param);
+                // Extract just the parameter name if it contains type annotation
+                std::string paramName = param;
+                size_t colonPos = paramName.find(':');
+                if (colonPos != std::string::npos) {
+                    paramName = paramName.substr(0, colonPos);
+                    // Remove any trailing whitespace
+                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                }
+                methodContext->addVariable(paramName);
             }
             
             if (method.second.second && !method.second.second->Validate(methodContext)) {
@@ -357,7 +373,15 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
         // Name the rest of the parameters
         for (size_t i = 0; i < params.size(); i++) {
             ++argIt;
-            argIt->setName(params[i]);
+            // Extract just the parameter name if it contains type annotation
+            std::string paramName = params[i];
+            size_t colonPos = paramName.find(':');
+            if (colonPos != std::string::npos) {
+                paramName = paramName.substr(0, colonPos);
+                // Remove any trailing whitespace
+                paramName.erase(paramName.find_last_not_of(" \t") + 1);
+            }
+            argIt->setName(paramName);
         }
         
         // Create a basic block for the function
@@ -378,13 +402,23 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
         // Add method parameters to the scope
         for (size_t i = 0; i < params.size(); i++) {
             ++argIt;
+            
+            // Extract just the parameter name if it contains type annotation
+            std::string paramName = params[i];
+            size_t colonPos = paramName.find(':');
+            if (colonPos != std::string::npos) {
+                paramName = paramName.substr(0, colonPos);
+                // Remove any trailing whitespace
+                paramName.erase(paramName.find_last_not_of(" \t") + 1);
+            }
+            
             // Create allocas for method parameters so they can be accessed like variables
             llvm::AllocaInst* paramAlloca = generator.createEntryBlockAlloca(
-                func, params[i], llvm::Type::getFloatTy(context));
+                func, paramName, llvm::Type::getFloatTy(context));
             // Store the parameter value in the alloca
             generator.getBuilder()->CreateStore(&*argIt, paramAlloca);
             // Add the alloca to the scope
-            generator.setNamedValue(params[i], paramAlloca);
+            generator.setNamedValue(paramName, paramAlloca);
         }
         
         // Generate code for the method body
@@ -418,12 +452,21 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
             // If it's a setter method and no return value was generated,
             // try to get the parameter value to return
             if (!params.empty()) {
-                llvm::Value* paramValue = generator.getNamedValue(params[0]);
+                // Extract just the parameter name if it contains type annotation
+                std::string paramName = params[0];
+                size_t colonPos = paramName.find(':');
+                if (colonPos != std::string::npos) {
+                    paramName = paramName.substr(0, colonPos);
+                    // Remove any trailing whitespace
+                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                }
+                
+                llvm::Value* paramValue = generator.getNamedValue(paramName);
                 if (paramValue) {
                     // If it's an alloca, load the value
                     if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(paramValue)) {
                         returnValue = generator.getBuilder()->CreateLoad(
-                            alloca->getAllocatedType(), alloca, params[0]);
+                            alloca->getAllocatedType(), alloca, paramName);
                     } else {
                         returnValue = paramValue;
                     }
