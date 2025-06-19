@@ -165,18 +165,104 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     // Let-in expressions
     if (auto letIn = dynamic_cast<LetIn*>(expr)) {
         // The type of a let-in expression is the type of its body
-        return inferType(letIn->getInExpression(), context);
+        std::cout << "[DEBUG] TypeChecker::inferType - Processing LetIn expression\n";
+        Expression* inExpr = letIn->getInExpression();
+        std::cout << "[DEBUG] TypeChecker::inferType - LetIn inExpression = " << inExpr << "\n";
+        const Type* resultType = inferType(inExpr, context);
+        std::cout << "[DEBUG] TypeChecker::inferType - LetIn inferred type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+        return resultType;
     }
     
     // Block expressions
     if (auto block = dynamic_cast<BlockExpression*>(expr)) {
         // The type of a block is the type of its last statement
+        std::cout << "[DEBUG] TypeChecker::inferType - Processing BlockExpression\n";
         const auto& statements = block->getStatements();
+        std::cout << "[DEBUG] TypeChecker::inferType - BlockExpression has " << statements.size() << " statements\n";
         if (!statements.empty()) {
-            if (auto exprStmt = dynamic_cast<ExpressionStatement*>(statements.back())) {
-                return inferType(exprStmt->getExpression(), context);
+            // Check from the last statement backwards
+            for (auto it = statements.rbegin(); it != statements.rend(); ++it) {
+                Statement* stmt = *it;
+                std::cout << "[DEBUG] TypeChecker::inferType - Checking statement: " << stmt << "\n";
+                
+                // If it's an expression statement, return its type
+                if (auto exprStmt = dynamic_cast<ExpressionStatement*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Found ExpressionStatement\n";
+                    const Type* resultType = inferType(exprStmt->getExpression(), context);
+                    std::cout << "[DEBUG] TypeChecker::inferType - ExpressionStatement type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+                    return resultType;
+                }
+                
+                // Skip function declarations as they don't contribute to the return value
+                if (dynamic_cast<FunctionDeclaration*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Skipping FunctionDeclaration\n";
+                    continue;
+                }
+                
+                // For ForStatement, analyze its body to determine return type
+                if (auto forStmt = dynamic_cast<ForStatement*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Found ForStatement\n";
+                    // Get the last expression from the for loop body
+                    BlockStatement* forBody = forStmt->getBody();
+                    if (forBody) {
+                        std::cout << "[DEBUG] TypeChecker::inferType - ForStatement has body\n";
+                        Expression* lastExpr = forBody->getLastExpression();
+                        if (lastExpr) {
+                            std::cout << "[DEBUG] TypeChecker::inferType - ForStatement body has last expression: " << lastExpr << "\n";
+                            const Type* resultType = inferType(lastExpr, context);
+                            std::cout << "[DEBUG] TypeChecker::inferType - ForStatement last expression type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+                            return resultType;
+                        } else {
+                            std::cout << "[DEBUG] TypeChecker::inferType - ForStatement body has no last expression\n";
+                        }
+                    } else {
+                        std::cout << "[DEBUG] TypeChecker::inferType - ForStatement has no body\n";
+                    }
+                    // If no expression found in for body, continue looking
+                    continue;
+                }
+                
+                // For WhileStatement, analyze its body to determine return type
+                if (auto whileStmt = dynamic_cast<WhileStatement*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Found WhileStatement\n";
+                    // Get the last expression from the while loop body
+                    BlockStatement* whileBody = whileStmt->getBody();
+                    if (whileBody) {
+                        std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement has body\n";
+                        Expression* lastExpr = whileBody->getLastExpression();
+                        if (lastExpr) {
+                            std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement body has last expression: " << lastExpr << "\n";
+                            const Type* resultType = inferType(lastExpr, context);
+                            std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement last expression type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+                            return resultType;
+                        } else {
+                            std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement body has no last expression\n";
+                        }
+                    } else {
+                        std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement has no body\n";
+                    }
+                    // If no expression found in while body, continue looking
+                    continue;
+                }
+                
+                // Let's check what type of statement this actually is
+                if (dynamic_cast<Assignment*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is Assignment\n";
+                } else if (dynamic_cast<IfStatement*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is IfStatement\n";
+                } else if (dynamic_cast<WhileStatement*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is WhileStatement\n";
+                } else if (dynamic_cast<ReturnStatement*>(stmt)) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is ReturnStatement\n";
+                } else {
+                    std::cout << "[DEBUG] TypeChecker::inferType - Statement type unknown\n";
+                }
+                std::cout << "[DEBUG] TypeChecker::inferType - Statement type not handled, continuing\n";
+                // For other statement types that don't contribute to return value
+                // we continue looking backwards
             }
         }
+        std::cout << "[DEBUG] TypeChecker::inferType - BlockExpression returning Void\n";
         return registry.getVoidType();
     }
     

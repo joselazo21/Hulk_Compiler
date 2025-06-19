@@ -79,6 +79,9 @@ public:
     // --- NUEVO ---
     void generateDeclarations(CodeGenerator& cg) override;
     llvm::Value* generateExecutableCode(CodeGenerator& cg, bool onlyFunctions = false) override;
+    
+    // Method to get the last expression for return type checking
+    Expression* getLastExpression() const;
 };
 
 // ExpressionStatement class
@@ -466,6 +469,9 @@ public:
     bool Validate(IContext* context) override;
     llvm::Value* codegen(CodeGenerator& generator) override;
     ~ForStatement();
+    
+    // Getter for accessing the body
+    BlockStatement* getBody() const { return body; }
 };
 
 // FunctionDeclaration class

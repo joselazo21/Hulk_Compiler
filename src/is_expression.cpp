@@ -69,7 +69,6 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
     
     // Handle primitive types first - but only for actual primitives, not object pointers
     if (objectType->isFloatTy()) {
-        std::cout << "[DEBUG] IsExpression::codegen - Float type detected" << std::endl;
         // For Number type - check if target type is Number or Object
         if (typeName == "Number" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
@@ -77,7 +76,6 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
     } else if (objectType->isIntegerTy(1)) {
-        std::cout << "[DEBUG] IsExpression::codegen - Boolean type detected" << std::endl;
         // For Boolean type - check if target type is Boolean or Object
         if (typeName == "Boolean" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
@@ -102,17 +100,9 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
         }
     }
     
-    std::cout << "[DEBUG] IsExpression::codegen - Using runtime type checking for target: " << typeName << std::endl;
-    std::cout << "[DEBUG] IsExpression::codegen - Object value type: " << objectType << std::endl;
-    std::cout << "[DEBUG] IsExpression::codegen - Is pointer type: " << objectType->isPointerTy() << std::endl;
-    
-    // For all object types (including runtime types), use runtime type checking
-    // This ensures proper inheritance checking at runtime
-    
     // Create or get the enhanced runtime type checking function
     llvm::Function* runtimeTypeCheckFunc = module->getFunction("__hulk_runtime_type_check_enhanced");
     if (!runtimeTypeCheckFunc) {
-        std::cout << "[DEBUG] IsExpression::codegen - Creating runtime type check function" << std::endl;
         // Create the enhanced runtime type checking function
         // int __hulk_runtime_type_check_enhanced(void* object, const char* typeName)
         llvm::FunctionType* funcType = llvm::FunctionType::get(
@@ -137,23 +127,16 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
         voidPtr = builder->CreateBitCast(objectValue, llvm::Type::getInt8PtrTy(context), "void.ptr");
     } else {
         // Not a pointer, this shouldn't happen for objects but handle it gracefully
-        std::cout << "[DEBUG] IsExpression::codegen - Warning: object is not a pointer type!" << std::endl;
         return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
     }
     
     llvm::Constant* typeNameStr = builder->CreateGlobalStringPtr(typeName, "target.typename");
-    
-    std::cout << "[DEBUG] IsExpression::codegen - About to call runtime type check function" << std::endl;
-    std::cout << "[DEBUG] IsExpression::codegen - voidPtr: " << voidPtr << std::endl;
-    std::cout << "[DEBUG] IsExpression::codegen - typeNameStr: " << typeNameStr << std::endl;
     
     // Call the enhanced runtime type checking function
     llvm::Value* result = builder->CreateCall(runtimeTypeCheckFunc, {voidPtr, typeNameStr}, "is.result");
     
     // Convert int result to bool (non-zero means true)
     llvm::Value* boolResult = builder->CreateICmpNE(result, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), "is.bool.result");
-    
-    std::cout << "[DEBUG] IsExpression::codegen - Runtime type check call created successfully" << std::endl;
     
     return boolResult;
 }

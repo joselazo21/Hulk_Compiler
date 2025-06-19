@@ -22,7 +22,7 @@ void Print::printNode(int depth) {
 bool Print::Validate(IContext* context) {
     if (!expr->Validate(context)) {
         SEMANTIC_ERROR("Error in print expression", location);
-        return false;
+        return false; // Print validation depends on its expression being valid
     }
     return true;
 }

@@ -46,7 +46,7 @@ bool NewExpression::Validate(IContext* context) {
     // Get constructor parameter types from the type definition
     std::vector<std::string> constructorParams = typeDef->getParams();
     
-    // If this type doesn't have its own constructor parameters, check if it inherits from a parent
+    // If this type doesn't have its own constructor parameters, traverse the inheritance chain
     if (constructorParams.empty() && typeDef->getParentType() != "Object") {
         // Check if parent has explicit parent arguments defined
         const auto& parentArgs = typeDef->getParentArgs();
@@ -58,11 +58,20 @@ bool NewExpression::Validate(IContext* context) {
                 return false;
             }
         } else {
-            // No explicit parent arguments, so inherit constructor from parent
-            std::string parentType = typeDef->getParentType();
-            TypeDefinition* parentTypeDef = context->getTypeDefinition(parentType);
-            if (parentTypeDef) {
-                constructorParams = parentTypeDef->getParams();
+            // No explicit parent arguments, so traverse inheritance chain to find constructor
+            std::string currentType = typeDef->getParentType();
+            while (currentType != "Object" && constructorParams.empty()) {
+                TypeDefinition* currentTypeDef = context->getTypeDefinition(currentType);
+                if (currentTypeDef) {
+                    constructorParams = currentTypeDef->getParams();
+                    if (constructorParams.empty()) {
+                        // Continue up the inheritance chain
+                        currentType = currentTypeDef->getParentType();
+                    }
+                } else {
+                    // Type definition not found, break the loop
+                    break;
+                }
             }
         }
     }
@@ -75,44 +84,131 @@ bool NewExpression::Validate(IContext* context) {
         return false;
     }
     
-    // Get field types from the type definition to validate argument types
-    const auto& fields = typeDef->getFields();
+    // Validate argument types against expected constructor parameter types
+    // We need to find the type definition that actually defines the constructor parameters
+    TypeDefinition* constructorOwnerTypeDef = nullptr;
     
-    // Validate argument types against expected field types
-    for (size_t i = 0; i < args.size() && i < fields.size(); ++i) {
-        // Get the expected type from the field definition
-        std::string fieldName = fields[i].first;
-        std::string expectedType = "Number"; // Default
-        
-        // Extract type annotation from field name if present (e.g., "x:Number" -> "Number")
-        size_t colonPos = fieldName.find(':');
-        if (colonPos != std::string::npos) {
-            expectedType = fieldName.substr(colonPos + 1);
-            // Remove any leading/trailing whitespace
-            expectedType.erase(0, expectedType.find_first_not_of(" \t"));
-            expectedType.erase(expectedType.find_last_not_of(" \t") + 1);
+    // Always traverse the inheritance chain to find where the constructor parameters are actually defined
+    std::string currentType = typeName;
+    while (currentType != "Object" && !constructorOwnerTypeDef) {
+        TypeDefinition* currentTypeDef = context->getTypeDefinition(currentType);
+        if (currentTypeDef) {
+            std::vector<std::string> currentParams = currentTypeDef->getParams();
+            if (!currentParams.empty()) {
+                // Found the type that defines the constructor parameters
+                constructorOwnerTypeDef = currentTypeDef;
+                constructorParams = currentParams;
+                break;
+            }
+            // Continue up the inheritance chain
+            currentType = currentTypeDef->getParentType();
+        } else {
+            break;
         }
+    }
+    
+    // If we still don't have constructor parameters, something is wrong
+    if (!constructorOwnerTypeDef) {
+        constructorOwnerTypeDef = typeDef; // Fallback to original type
+    }
+    
+    // Debug output to understand the inheritance chain
+    std::cout << "[DEBUG] Type: " << typeName << ", constructorOwnerTypeDef: " << (constructorOwnerTypeDef ? constructorOwnerTypeDef->getName() : "null") << std::endl;
+    std::cout << "[DEBUG] Constructor params: ";
+    for (const auto& param : constructorParams) {
+        std::cout << param << " ";
+    }
+    std::cout << std::endl;
+    
+    // Now validate argument types against the constructor parameter types
+    // We need to look at the fields of the type that defines the constructor
+    if (constructorOwnerTypeDef && !constructorParams.empty()) {
+        const auto& constructorFields = constructorOwnerTypeDef->getFields();
         
-        // Infer the actual type of the argument
-        std::string actualType = "Number"; // Default
-        
-        // Check if argument is a string literal
-        if (dynamic_cast<StringLiteral*>(args[i])) {
-            actualType = "String";
+        std::cout << "[DEBUG] Fields in constructorOwnerTypeDef (" << constructorOwnerTypeDef->getName() << "): ";
+        for (const auto& field : constructorFields) {
+            std::cout << field.first << " ";
         }
-        // Check if argument is a number literal
-        else if (dynamic_cast<Number*>(args[i])) {
-            actualType = "Number";
-        }
-        // For other expressions, we'd need more sophisticated type inference
-        // For now, we'll assume they're valid
+        std::cout << std::endl;
         
-        // Check type compatibility
-        if (expectedType != actualType) {
-            SEMANTIC_ERROR("Constructor argument " + std::to_string(i + 1) + 
-                          " for type '" + typeName + "' expects " + expectedType + 
-                          " but got " + actualType, location);
-            return false;
+        for (size_t i = 0; i < args.size() && i < constructorParams.size(); ++i) {
+            // Find the field that corresponds to this constructor parameter
+            std::string expectedType = "String"; // Default to String since most constructor params are names
+            bool foundField = false;
+            
+            // Look for a field that matches the constructor parameter name
+            for (const auto& field : constructorFields) {
+                std::string fieldName = field.first;
+                
+                std::cout << "[DEBUG] Checking field: '" << fieldName << "' against param: '" << constructorParams[i] << "'" << std::endl;
+                
+                // Extract the actual field name (remove type annotation if present)
+                std::string actualFieldName = fieldName;
+                size_t colonPos = fieldName.find(':');
+                if (colonPos != std::string::npos) {
+                    actualFieldName = fieldName.substr(0, colonPos);
+                    // Remove any leading/trailing whitespace
+                    actualFieldName.erase(0, actualFieldName.find_first_not_of(" \t"));
+                    actualFieldName.erase(actualFieldName.find_last_not_of(" \t") + 1);
+                    
+                    // Extract type annotation from field name if present
+                    expectedType = fieldName.substr(colonPos + 1);
+                    // Remove any leading/trailing whitespace
+                    expectedType.erase(0, expectedType.find_first_not_of(" \t"));
+                    expectedType.erase(expectedType.find_last_not_of(" \t") + 1);
+                    foundField = true;
+                    
+                    std::cout << "[DEBUG] Field has type annotation - actualFieldName: '" << actualFieldName 
+                              << "', expectedType: '" << expectedType << "'" << std::endl;
+                }
+                
+                // Check if this field corresponds to the constructor parameter
+                if (actualFieldName == constructorParams[i]) {
+                    std::cout << "[DEBUG] Found matching field for param '" << constructorParams[i] << "'" << std::endl;
+                    break;
+                }
+            }
+            
+            // If we didn't find the field in the constructor owner type, 
+            // it might be because the parameter name doesn't match the field name exactly
+            // In this case, we should infer the type from the parameter name itself
+            if (!foundField) {
+                // For the first parameter named "name", it's typically String
+                if (constructorParams[i] == "name") {
+                    expectedType = "String";
+                } else {
+                    // For other parameters, try to infer from context or keep default
+                    expectedType = "String"; // Most constructor params are strings
+                }
+            }
+            
+            // Debug output to help diagnose the issue
+            std::cout << "[DEBUG] Constructor param " << i << " (" << constructorParams[i] 
+                      << ") expected type: " << expectedType << ", foundField: " << foundField << std::endl;
+            
+            // Infer the actual type of the argument
+            std::string actualType = "Number"; // Default
+            
+            // Check if argument is a string literal
+            if (dynamic_cast<StringLiteral*>(args[i])) {
+                actualType = "String";
+            }
+            // Check if argument is a number literal
+            else if (dynamic_cast<Number*>(args[i])) {
+                actualType = "Number";
+            }
+            // For other expressions, we'd need more sophisticated type inference
+            // For now, we'll assume they're valid
+            
+            std::cout << "[DEBUG] Constructor param " << i << " actual type: " << actualType << std::endl;
+            
+            // Check type compatibility
+            if (expectedType != actualType) {
+                SEMANTIC_ERROR("Constructor argument " + std::to_string(i + 1) + 
+                              " for type '" + typeName + "' expects " + expectedType + 
+                              " but got " + actualType, location);
+                return false;
+            }
         }
     }
     
@@ -303,18 +399,67 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             value = args[i]->codegen(generator);
             std::cout << "[DEBUG] Using constructor argument " << i << " for parent field " << fieldName << std::endl;
         } else {
-            // Default to appropriate zero value based on field type
-            llvm::Type* fieldType = runtimeStructType->getElementType(i + 1); // +1 for type ID field
-            if (fieldType->isFloatTy()) {
-                value = llvm::ConstantFP::get(fieldType, 0.0);
-            } else if (fieldType->isIntegerTy()) {
-                value = llvm::ConstantInt::get(fieldType, 0);
-            } else if (fieldType->isPointerTy()) {
-                value = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(fieldType));
-            } else {
-                value = llvm::Constant::getNullValue(fieldType);
+            // Try to get the field initialization expression by traversing the inheritance chain
+            std::string currentType = parentType;
+            bool foundField = false;
+            
+            while (currentType != "Object" && !foundField) {
+                TypeDefinition* currentTypeDef = globalContext->getTypeDefinition(currentType);
+                if (currentTypeDef) {
+                    const auto& currentFields = currentTypeDef->getFields();
+                    
+                    // Find the field by name in the current type
+                    for (const auto& currentField : currentFields) {
+                        std::string currentFieldName = currentField.first;
+                        
+                        // Extract the actual field name (remove type annotation if present)
+                        size_t colonPos = currentFieldName.find(':');
+                        if (colonPos != std::string::npos) {
+                            currentFieldName = currentFieldName.substr(0, colonPos);
+                            // Remove any leading/trailing whitespace
+                            currentFieldName.erase(0, currentFieldName.find_first_not_of(" \t"));
+                            currentFieldName.erase(currentFieldName.find_last_not_of(" \t") + 1);
+                        }
+                        
+                        if (currentFieldName == fieldName) {
+                            Expression* fieldInitExpr = currentField.second;
+                            if (fieldInitExpr) {
+                                value = fieldInitExpr->codegen(generator);
+                                std::cout << "[DEBUG] Using field initialization expression from type " << currentType << " for field " << fieldName << std::endl;
+                                foundField = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!foundField) {
+                        // Move up the inheritance chain
+                        currentType = currentTypeDef->getParentType();
+                    }
+                } else {
+                    // Type definition not found, break the loop
+                    break;
+                }
             }
-            std::cout << "[DEBUG] Using default value for parent field " << fieldName << std::endl;
+            
+            if (!foundField) {
+                std::cout << "[DEBUG] Field " << fieldName << " not found in inheritance chain starting from " << parentType << std::endl;
+            }
+            
+            // If still no value, use default zero value
+            if (!value) {
+                llvm::Type* fieldType = runtimeStructType->getElementType(i + 1); // +1 for type ID field
+                if (fieldType->isFloatTy()) {
+                    value = llvm::ConstantFP::get(fieldType, 0.0);
+                } else if (fieldType->isIntegerTy()) {
+                    value = llvm::ConstantInt::get(fieldType, 0);
+                } else if (fieldType->isPointerTy()) {
+                    value = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(fieldType));
+                } else {
+                    value = llvm::Constant::getNullValue(fieldType);
+                }
+                std::cout << "[DEBUG] Using default value for parent field " << fieldName << std::endl;
+            }
         }
         if (!value) {
             std::cout << "[DEBUG] ERROR: Failed to get value for parent field " << fieldName << std::endl;

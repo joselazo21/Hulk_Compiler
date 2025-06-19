@@ -36,10 +36,12 @@ void AssignmentExpression::printNode(int depth) {
 }
 
 bool AssignmentExpression::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     // Check if trying to assign to 'self' - this is not allowed
     if (!memberAccess && id == "self") {
         SEMANTIC_ERROR("Cannot assign to 'self': 'self' is not a valid assignment target", location);
-        return false;
+        hasErrors = true;
     }
     
     if (!expr->Validate(context)) {
@@ -48,7 +50,7 @@ bool AssignmentExpression::Validate(IContext* context) {
         } else {
             SEMANTIC_ERROR("Error in assignment expression to variable '" + id + "'", location);
         }
-        return false;
+        hasErrors = true;
     }
     
     // Create type registry and checker for strict type verification
@@ -59,34 +61,37 @@ bool AssignmentExpression::Validate(IContext* context) {
     const Type* exprType = checker.inferType(expr, context);
     if (!exprType) {
         SEMANTIC_ERROR("Cannot infer type for expression in assignment", location);
-        return false;
+        hasErrors = true;
     }
     
-    std::cout << "[DEBUG] AssignmentExpression::Validate - Expression type: " << exprType->toString() << std::endl;
+    if (exprType) {
+        std::cout << "[DEBUG] AssignmentExpression::Validate - Expression type: " << exprType->toString() << std::endl;
+    }
     
     if (memberAccess) {
         // Validate the member access first
         if (!memberAccess->Validate(context)) {
-            return false;
+            hasErrors = true;
         }
         
         // Verify type of member field
         const Type* memberType = inferMemberType(memberAccess, context, typeRegistry);
         if (!memberType) {
             SEMANTIC_ERROR("Cannot determine type of member in assignment", location);
-            return false;
+            hasErrors = true;
+        } else {
+            std::cout << "[DEBUG] AssignmentExpression::Validate - Member type: " << memberType->toString() << std::endl;
+            
+            if (exprType && !checker.areTypesCompatible(memberType, exprType)) {
+                SEMANTIC_ERROR("Type mismatch in member assignment: expected " + 
+                             memberType->toString() + ", got " + exprType->toString(), location);
+                hasErrors = true;
+            }
         }
         
-        std::cout << "[DEBUG] AssignmentExpression::Validate - Member type: " << memberType->toString() << std::endl;
-        
-        if (!checker.areTypesCompatible(memberType, exprType)) {
-            SEMANTIC_ERROR("Type mismatch in member assignment: expected " + 
-                         memberType->toString() + ", got " + exprType->toString(), location);
-            return false;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Member assignment type check passed" << std::endl;
         }
-        
-        std::cout << "[DEBUG] Member assignment type check passed" << std::endl;
-        return true;
     } else {
         // Verify type of variable
         llvm::Type* varLLVMType = context->getVariableType(id);
@@ -94,26 +99,28 @@ bool AssignmentExpression::Validate(IContext* context) {
             // Variable doesn't exist yet - this might be a new variable declaration
             // In this case, we allow the assignment and the variable will take the type of the expression
             std::cout << "[DEBUG] Variable '" << id << "' not found in context, allowing assignment (new variable)" << std::endl;
-            return true;
+        } else {
+            const Type* expectedType = llvmTypeToOurType(varLLVMType, typeRegistry);
+            if (!expectedType) {
+                SEMANTIC_ERROR("Cannot convert LLVM type to our type system for variable '" + id + "'", location);
+                hasErrors = true;
+            } else {
+                std::cout << "[DEBUG] AssignmentExpression::Validate - Variable '" << id << "' expected type: " << expectedType->toString() << std::endl;
+                
+                if (exprType && !checker.areTypesCompatible(expectedType, exprType)) {
+                    SEMANTIC_ERROR("Type mismatch in variable assignment: variable '" + id + 
+                                 "' expects " + expectedType->toString() + ", got " + exprType->toString(), location);
+                    hasErrors = true;
+                }
+            }
         }
         
-        const Type* expectedType = llvmTypeToOurType(varLLVMType, typeRegistry);
-        if (!expectedType) {
-            SEMANTIC_ERROR("Cannot convert LLVM type to our type system for variable '" + id + "'", location);
-            return false;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Variable assignment type check passed" << std::endl;
         }
-        
-        std::cout << "[DEBUG] AssignmentExpression::Validate - Variable '" << id << "' expected type: " << expectedType->toString() << std::endl;
-        
-        if (!checker.areTypesCompatible(expectedType, exprType)) {
-            SEMANTIC_ERROR("Type mismatch in variable assignment: variable '" + id + 
-                         "' expects " + expectedType->toString() + ", got " + exprType->toString(), location);
-            return false;
-        }
-        
-        std::cout << "[DEBUG] Variable assignment type check passed" << std::endl;
-        return true;
     }
+    
+    return !hasErrors;
 }
 
 AssignmentExpression::~AssignmentExpression() {

@@ -78,6 +78,15 @@ llvm::Value* ForStatement::codegen(CodeGenerator& generator) {
     llvm::BasicBlock* incBB = llvm::BasicBlock::Create(generator.getContext(), "for.inc", func);
     llvm::BasicBlock* endBB = llvm::BasicBlock::Create(generator.getContext(), "for.end", func);
     
+    // Create an alloca to store the result of each iteration
+    llvm::AllocaInst* resultAlloca = generator.createEntryBlockAlloca(
+        func, "for.result", llvm::Type::getFloatTy(generator.getContext()));
+    
+    // Initialize with default value (0.0)
+    generator.getBuilder()->CreateStore(
+        llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0),
+        resultAlloca);
+    
     // 4. Saltar a condición
     generator.getBuilder()->CreateBr(condBB);
     
@@ -89,9 +98,19 @@ llvm::Value* ForStatement::codegen(CodeGenerator& generator) {
     
     // 6. Generar cuerpo
     generator.getBuilder()->SetInsertPoint(bodyBB);
-    if (!body->codegen(generator)) {
+    llvm::Value* bodyResult = body->codegen(generator);
+    if (!bodyResult) {
         return nullptr;
     }
+    
+    // Store the result of the body execution (this will be the last expression's value)
+    // Convert to float if necessary
+    if (bodyResult->getType()->isIntegerTy()) {
+        bodyResult = generator.getBuilder()->CreateSIToFP(
+            bodyResult, llvm::Type::getFloatTy(generator.getContext()));
+    }
+    generator.getBuilder()->CreateStore(bodyResult, resultAlloca);
+    
     generator.getBuilder()->CreateBr(incBB);
     
     // 7. Generar incremento
@@ -104,5 +123,7 @@ llvm::Value* ForStatement::codegen(CodeGenerator& generator) {
     // 8. Establecer punto de inserción al final
     generator.getBuilder()->SetInsertPoint(endBB);
     
-    return llvm::Constant::getNullValue(llvm::Type::getInt32Ty(generator.getContext()));
+    // Load and return the final result
+    return generator.getBuilder()->CreateLoad(
+        llvm::Type::getFloatTy(generator.getContext()), resultAlloca, "for.final.result");
 }

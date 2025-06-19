@@ -22,7 +22,7 @@ void Variable::printNode(int depth) {
 bool Variable::Validate(IContext* context) {
     if (!context->isDefined(name)) {
         SEMANTIC_ERROR("Variable '" + name + "' is not defined", location);
-        return false;
+        return false; // This is a critical error that should stop validation
     }
     return true;
 }

@@ -10,7 +10,7 @@ struct SourceLocation {
     int column;
     std::string filename;
 
-    SourceLocation(int l = 0, int c = 0, std::string f = "entrada.txt") 
+    SourceLocation(int l = 0, int c = 0, std::string f = "script.hulk") 
         : line(l), column(c), filename(f) {}
 };
 

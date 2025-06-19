@@ -29,9 +29,12 @@ void BinaryOperation::printNode(int depth) {
 }
 
 bool BinaryOperation::Validate(IContext* context) {
-    // First validate both operands
-    if (!left->Validate(context)) return false;
-    if (!right->Validate(context)) return false;
+    // First validate both operands - continue even if one fails
+    bool leftValid = left->Validate(context);
+    bool rightValid = right->Validate(context);
+    
+    // If either operand validation failed, return false but continue type checking
+    bool hasErrors = !leftValid || !rightValid;
     
     // Create type registry and checker for strict type verification
     TypeRegistry typeRegistry;
@@ -43,12 +46,17 @@ bool BinaryOperation::Validate(IContext* context) {
     
     if (!leftType) {
         SEMANTIC_ERROR("Cannot infer type for left operand in binary operation", location);
-        return false;
+        hasErrors = true;
     }
     
     if (!rightType) {
         SEMANTIC_ERROR("Cannot infer type for right operand in binary operation", location);
-        return false;
+        hasErrors = true;
+    }
+    
+    // If we can't infer types, we can't continue with type checking
+    if (!leftType || !rightType) {
+        return !hasErrors;
     }
     
     std::cout << "[DEBUG] BinaryOperation::Validate - Left type: " << leftType->toString() 
@@ -68,17 +76,19 @@ bool BinaryOperation::Validate(IContext* context) {
         if (!leftBuiltin || leftBuiltin->getBuiltinType() != BuiltinType::NUMBER) {
             SEMANTIC_ERROR("Left operand of arithmetic operation '" + operation + 
                          "' must be Number type, got " + leftType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
         if (!rightBuiltin || rightBuiltin->getBuiltinType() != BuiltinType::NUMBER) {
             SEMANTIC_ERROR("Right operand of arithmetic operation '" + operation + 
                          "' must be Number type, got " + rightType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
-        std::cout << "[DEBUG] Arithmetic operation " << operation << " type check passed" << std::endl;
-        return true;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Arithmetic operation " << operation << " type check passed" << std::endl;
+        }
+        return !hasErrors;
     }
     
     // String concatenation operations: @, @@
@@ -95,17 +105,19 @@ bool BinaryOperation::Validate(IContext* context) {
         if (!leftValid) {
             SEMANTIC_ERROR("Left operand of concatenation operation '" + operation + 
                          "' must be String or Number type, got " + leftType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
         if (!rightValid) {
             SEMANTIC_ERROR("Right operand of concatenation operation '" + operation + 
                          "' must be String or Number type, got " + rightType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
-        std::cout << "[DEBUG] Concatenation operation " << operation << " type check passed" << std::endl;
-        return true;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Concatenation operation " << operation << " type check passed" << std::endl;
+        }
+        return !hasErrors;
     }
     
     // Comparison operations: ==, !=, <, >, <=, >=
@@ -117,7 +129,7 @@ bool BinaryOperation::Validate(IContext* context) {
             SEMANTIC_ERROR("Comparison operation '" + operation + 
                          "' requires compatible types, got " + leftType->toString() + 
                          " and " + rightType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
         // For ordering comparisons (<, >, <=, >=), both operands must be Number
@@ -130,12 +142,14 @@ bool BinaryOperation::Validate(IContext* context) {
                 SEMANTIC_ERROR("Ordering comparison operation '" + operation + 
                              "' requires Number types, got " + leftType->toString() + 
                              " and " + rightType->toString(), location);
-                return false;
+                hasErrors = true;
             }
         }
         
-        std::cout << "[DEBUG] Comparison operation " << operation << " type check passed" << std::endl;
-        return true;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Comparison operation " << operation << " type check passed" << std::endl;
+        }
+        return !hasErrors;
     }
     
     // Logical operations: &&, ||
@@ -154,17 +168,19 @@ bool BinaryOperation::Validate(IContext* context) {
         if (!leftValid) {
             SEMANTIC_ERROR("Left operand of logical operation '" + operation + 
                          "' must be Boolean or Number type, got " + leftType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
         if (!rightValid) {
             SEMANTIC_ERROR("Right operand of logical operation '" + operation + 
                          "' must be Boolean or Number type, got " + rightType->toString(), location);
-            return false;
+            hasErrors = true;
         }
         
-        std::cout << "[DEBUG] Logical operation " << operation << " type check passed" << std::endl;
-        return true;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Logical operation " << operation << " type check passed" << std::endl;
+        }
+        return !hasErrors;
     }
     
     // If we reach here, it's an unknown operation
@@ -284,6 +300,18 @@ llvm::Value* BinaryOperation::codegen(CodeGenerator& generator) {
     // Convert operands to float if needed
     if (L->getType()->isIntegerTy()) {
         L = builder.CreateSIToFP(L, floatType, "cast_l_to_float");
+    } else if (L->getType()->isPointerTy()) {
+        // If it's a pointer, load the value first
+        llvm::Type* pointedType = L->getType()->getPointerElementType();
+        if (pointedType->isFloatTy()) {
+            L = builder.CreateLoad(pointedType, L, "load_l_float");
+        } else if (pointedType->isIntegerTy()) {
+            llvm::Value* intVal = builder.CreateLoad(pointedType, L, "load_l_int");
+            L = builder.CreateSIToFP(intVal, floatType, "cast_l_to_float");
+        } else if (pointedType->isDoubleTy()) {
+            llvm::Value* doubleVal = builder.CreateLoad(pointedType, L, "load_l_double");
+            L = builder.CreateFPTrunc(doubleVal, floatType, "trunc_l_to_float");
+        }
     } else if (!L->getType()->isFloatTy()) {
         // If it's double, convert to float
         if (L->getType()->isDoubleTy()) {
@@ -293,6 +321,18 @@ llvm::Value* BinaryOperation::codegen(CodeGenerator& generator) {
     
     if (R->getType()->isIntegerTy()) {
         R = builder.CreateSIToFP(R, floatType, "cast_r_to_float");
+    } else if (R->getType()->isPointerTy()) {
+        // If it's a pointer, load the value first
+        llvm::Type* pointedType = R->getType()->getPointerElementType();
+        if (pointedType->isFloatTy()) {
+            R = builder.CreateLoad(pointedType, R, "load_r_float");
+        } else if (pointedType->isIntegerTy()) {
+            llvm::Value* intVal = builder.CreateLoad(pointedType, R, "load_r_int");
+            R = builder.CreateSIToFP(intVal, floatType, "cast_r_to_float");
+        } else if (pointedType->isDoubleTy()) {
+            llvm::Value* doubleVal = builder.CreateLoad(pointedType, R, "load_r_double");
+            R = builder.CreateFPTrunc(doubleVal, floatType, "trunc_r_to_float");
+        }
     } else if (!R->getType()->isFloatTy()) {
         // If it's double, convert to float
         if (R->getType()->isDoubleTy()) {

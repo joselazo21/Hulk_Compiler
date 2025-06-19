@@ -110,6 +110,7 @@ void LetIn::printNode(int depth) {
 
 bool LetIn::Validate(IContext* context) {
     IContext* letContext = context->createChildContext();
+    bool hasErrors = false;
 
     // Check which declaration format to use
     if (useTypedDecls) {
@@ -118,8 +119,8 @@ bool LetIn::Validate(IContext* context) {
             // Check if trying to declare 'self' - this is not allowed
             if (binding.name == "self") {
                 SEMANTIC_ERROR("Cannot declare variable 'self': 'self' is not a valid assignment target", location);
-                delete letContext;
-                return false;
+                hasErrors = true;
+                continue; // Continue checking other declarations
             }
             
             llvm::LLVMContext* llvmCtx = context->getLLVMContext();
@@ -237,16 +238,14 @@ bool LetIn::Validate(IContext* context) {
                 if (!isCompatible) {
                     SEMANTIC_ERROR("Type mismatch: variable '" + binding.name + "' declared as " + 
                                  binding.typeAnnotation + " but assigned " + actualTypeName, location);
-                    delete letContext;
-                    return false;
+                    hasErrors = true;
                 }
                 std::cout << "[DEBUG] LetIn::Validate - Type annotation is compatible with actual type" << std::endl;
             }
             
             if (!letContext->addVariable(binding.name, actualType, actualTypeName)) {
                 SEMANTIC_ERROR("Variable " + binding.name + " already defined in this scope", location);
-                delete letContext;
-                return false;
+                hasErrors = true;
             }
             
             std::cout << "[DEBUG] LetIn::Validate - Added variable " << binding.name << " to context with type " << actualTypeName << std::endl;
@@ -256,8 +255,7 @@ bool LetIn::Validate(IContext* context) {
         for (const auto& binding : typedDecls) {
             if (!binding.expr->Validate(letContext)) {
                 SEMANTIC_ERROR("Error in declaration of " + binding.name, location);
-                delete letContext;
-                return false;
+                hasErrors = true;
             }
         }
     } else {
@@ -266,8 +264,8 @@ bool LetIn::Validate(IContext* context) {
             // Check if trying to declare 'self' - this is not allowed
             if (decl.first == "self") {
                 SEMANTIC_ERROR("Cannot declare variable 'self': 'self' is not a valid assignment target", location);
-                delete letContext;
-                return false;
+                hasErrors = true;
+                continue; // Continue checking other declarations
             }
             
             llvm::LLVMContext* llvmCtx = context->getLLVMContext();
@@ -293,8 +291,7 @@ bool LetIn::Validate(IContext* context) {
             
             if (!letContext->addVariable(decl.first, varType)) {
                 SEMANTIC_ERROR("Variable " + decl.first + " already defined in this scope", location);
-                delete letContext;
-                return false;
+                hasErrors = true;
             }
             
             std::cout << "[DEBUG] LetIn::Validate - Added variable " << decl.first << " to context with type" << std::endl;
@@ -304,22 +301,29 @@ bool LetIn::Validate(IContext* context) {
         for (const auto& decl : decls) {
             if (!decl.second->Validate(letContext)) {
                 SEMANTIC_ERROR("Error in declaration of " + decl.first, location);
-                delete letContext;
-                return false;
+                hasErrors = true;
             }
         }
     }
     
     // Validate the 'in' expression using the extended context
+    // This validation should continue even if there were errors in declarations
+    // to catch additional semantic errors like function return type mismatches
     std::cout << "[DEBUG] LetIn::Validate - About to validate 'in' expression with letContext: " << letContext << std::endl;
-    if (expr && !expr->Validate(letContext)) {
-        SEMANTIC_ERROR("Error in 'in' expression of let statement", location);
-        delete letContext;
-        return false;
+    bool inExprValid = true;
+    if (expr) {
+        inExprValid = expr->Validate(letContext);
+        if (!inExprValid) {
+            SEMANTIC_ERROR("Error in 'in' expression of let statement", location);
+            hasErrors = true;
+        }
     }
     
     delete letContext;
-    return true;
+    
+    // Return false if there were any errors in declarations OR in the 'in' expression
+    // This ensures all semantic errors are caught and reported
+    return !hasErrors;
 }
 
 LetIn::~LetIn() {
@@ -334,7 +338,6 @@ LetIn::~LetIn() {
     }
     delete expr;
 }
-
 
 llvm::Value* LetIn::codegen(CodeGenerator& generator) {
     IContext* oldContext = generator.getContextObject();

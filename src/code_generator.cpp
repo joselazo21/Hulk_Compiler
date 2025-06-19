@@ -747,7 +747,7 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
     llvm::Function* currentFunc = TheModule->getFunction(currName);
     if (!currentFunc) {
         llvm::FunctionType* fnTy = llvm::FunctionType::get(
-            llvm::Type::getInt32Ty(*TheContext), {}, false);
+            llvm::Type::getFloatTy(*TheContext), {}, false);
         currentFunc = llvm::Function::Create(
             fnTy, llvm::Function::ExternalLinkage, currName, TheModule);
     }
@@ -832,9 +832,9 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
             
             B.CreateCondBr(isOutOfBounds, outOfBoundsBB, inBoundsBB);
             
-            // Out of bounds case - return 0
+            // Out of bounds case - return 0.0
             B.SetInsertPoint(outOfBoundsBB);
-            B.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), 0));
+            B.CreateRet(llvm::ConstantFP::get(llvm::Type::getFloatTy(*TheContext), 0.0));
             
             // In bounds case - return the vector element
             B.SetInsertPoint(inBoundsBB);
@@ -850,11 +850,14 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
             );
             llvm::Value* elementValue = B.CreateLoad(llvm::Type::getDoubleTy(*TheContext), elementPtr, "element_value");
             
+            // Convert double to float for return type consistency
+            llvm::Value* floatValue = B.CreateFPTrunc(elementValue, llvm::Type::getFloatTy(*TheContext), "double_to_float");
+            
             std::cout << "[DEBUG] Accessing vector element at index: ";
             actualCurrentVal->print(llvm::errs());
             std::cout << std::endl;
             
-            B.CreateRet(elementValue);
+            B.CreateRet(floatValue);
         } else {
             // No vector data array found, fall back to range-based iteration
             // Load the current index from the range struct
@@ -867,8 +870,11 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), 1), 
                 "actual.current");
                 
+            // Convert integer to float for return type consistency
+            llvm::Value* floatVal = B.CreateSIToFP(actualCurrentVal, llvm::Type::getFloatTy(*TheContext), "int_to_float");
+                
             std::cout << "[DEBUG] No vector data array found, returning index value" << std::endl;
-            B.CreateRet(actualCurrentVal);
+            B.CreateRet(floatVal);
         }
     }
 }
@@ -1024,7 +1030,7 @@ llvm::GlobalVariable* CodeGenerator::getIteratorGlobalVariable(const std::string
     
     if (!TheModule->getFunction(currName)) {
         llvm::FunctionType* fnTy = llvm::FunctionType::get(
-            llvm::Type::getInt32Ty(*TheContext), {}, false);
+            llvm::Type::getFloatTy(*TheContext), {}, false);
         llvm::Function::Create(
             fnTy, llvm::Function::ExternalLinkage, currName, TheModule);
     }

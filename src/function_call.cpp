@@ -32,24 +32,26 @@ void FunctionCall::printNode(int depth) {
 }
 
 bool FunctionCall::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     // First validate all arguments
     for (Expression* arg : args) {
         if (!arg->Validate(context)) {
-            return false;
+            hasErrors = true;
         }
     }
     
     // Permitir llamadas a métodos de objetos (ej: __iter_x.next())
     if (func_name.find('.') != std::string::npos) {
         // Considera válido cualquier llamada de la forma objeto.metodo(...)
-        return true;
+        return !hasErrors;
     }
     
     // Check if function exists with correct arity
     if (!context->isDefined(func_name, args.size())) {
         SEMANTIC_ERROR("Function '" + func_name + "' not defined with " + 
                       std::to_string(args.size()) + " arguments", location);
-        return false;
+        hasErrors = true;
     }
     
     // Create type registry and checker for strict type verification
@@ -68,13 +70,13 @@ bool FunctionCall::Validate(IContext* context) {
         if (!argType) {
             SEMANTIC_ERROR("Cannot infer type for argument " + std::to_string(i) + 
                          " in call to function '" + func_name + "'", location);
-            return false;
+            hasErrors = true;
+        } else {
+            argTypes.push_back(argType);
+            argTypeNames.push_back(argType->toString());
+            
+            std::cout << "[DEBUG] Argument " << i << " inferred type: " << argType->toString() << std::endl;
         }
-        
-        argTypes.push_back(argType);
-        argTypeNames.push_back(argType->toString());
-        
-        std::cout << "[DEBUG] Argument " << i << " inferred type: " << argType->toString() << std::endl;
     }
     
     // Special handling for print function which accepts variable arguments
@@ -82,10 +84,12 @@ bool FunctionCall::Validate(IContext* context) {
         // Print accepts any number of arguments of any type
         if (args.empty()) {
             SEMANTIC_ERROR("print requires at least one argument", location);
-            return false;
+            hasErrors = true;
         }
-        std::cout << "[DEBUG] Function print validated with " << args.size() << " arguments" << std::endl;
-        return true;
+        if (!hasErrors) {
+            std::cout << "[DEBUG] Function print validated with " << args.size() << " arguments" << std::endl;
+        }
+        return !hasErrors;
     }
     
     // Get function type information from context
@@ -94,11 +98,12 @@ bool FunctionCall::Validate(IContext* context) {
         // For other built-in functions, create a temporary function type or allow them
         if (isBuiltinFunction(func_name)) {
             std::cout << "[DEBUG] Function " << func_name << " is built-in, allowing call" << std::endl;
-            return true;
+            return !hasErrors;
         }
         
         SEMANTIC_ERROR("Function '" + func_name + "' not found or has no type information", location);
-        return false;
+        hasErrors = true;
+        return !hasErrors;
     }
     
     // Verify argument count matches function signature
@@ -106,11 +111,12 @@ bool FunctionCall::Validate(IContext* context) {
         SEMANTIC_ERROR("Function '" + func_name + "' expects " + 
                       std::to_string(funcType->getParamTypes().size()) + 
                       " arguments, but " + std::to_string(argTypes.size()) + " provided", location);
-        return false;
+        hasErrors = true;
     }
     
-    // Verify type compatibility using the formal type checker
-    if (!checker.checkFunctionCall(funcType, argTypes)) {
+    // Verify type compatibility using the formal type checker (only if we have valid types)
+    if (!argTypes.empty() && argTypes.size() == funcType->getParamTypes().size() && 
+        !checker.checkFunctionCall(funcType, argTypes)) {
         std::string errorMsg = "Type mismatch in call to function '" + func_name + "'. Expected: (";
         for (size_t i = 0; i < funcType->getParamTypes().size(); i++) {
             if (i > 0) errorMsg += ", ";
@@ -123,11 +129,13 @@ bool FunctionCall::Validate(IContext* context) {
         }
         errorMsg += ")";
         SEMANTIC_ERROR(errorMsg, location);
-        return false;
+        hasErrors = true;
     }
     
-    std::cout << "[DEBUG] Function call " << func_name << " type check passed" << std::endl;
-    return true;
+    if (!hasErrors) {
+        std::cout << "[DEBUG] Function call " << func_name << " type check passed" << std::endl;
+    }
+    return !hasErrors;
 }
 
 FunctionCall::~FunctionCall() {

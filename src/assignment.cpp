@@ -16,15 +16,17 @@ void Assignment::printNode(int depth) {
 }
 
 bool Assignment::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     // Check if trying to assign to 'self' - this is not allowed
     if (id == "self") {
         SEMANTIC_ERROR("Cannot assign to 'self': 'self' is not a valid assignment target", location);
-        return false;
+        hasErrors = true;
     }
     
     if (!expr->Validate(context)) {
         SEMANTIC_ERROR("Error in assignment to variable '" + id + "'", location);
-        return false;
+        hasErrors = true;
     }
     
     // Check if variable exists and if types are compatible
@@ -64,11 +66,11 @@ bool Assignment::Validate(IContext* context) {
             
             SEMANTIC_ERROR("Type mismatch in assignment to variable '" + id + 
                          "': expected " + expectedTypeName + ", got " + actualTypeName, location);
-            return false;
+            hasErrors = true;
         }
     }
     
-    return true;
+    return !hasErrors;
 }
 
 Assignment::~Assignment() {

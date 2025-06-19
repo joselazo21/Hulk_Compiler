@@ -40,19 +40,21 @@ void IfExpression::printNode(int depth) {
 }
 
 bool IfExpression::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     if (!condition->Validate(context)) {
         SEMANTIC_ERROR("Error in if-expression condition", location);
-        return false;
+        hasErrors = true;
     }
     if (!thenExpr->Validate(context)) {
         SEMANTIC_ERROR("Error in then branch of if-expression", location);
-        return false;
+        hasErrors = true;
     }
     if (!elseExpr->Validate(context)) {
         SEMANTIC_ERROR("Error in else branch of if-expression", location);
-        return false;
+        hasErrors = true;
     }
-    return true;
+    return !hasErrors;
 }
 
 llvm::Value* IfExpression::codegen(CodeGenerator& generator) {

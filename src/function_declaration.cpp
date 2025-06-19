@@ -1,4 +1,5 @@
 #include "tree.hpp"
+#include "type_system.hpp"
 #include <sstream>
 #include <iostream>
 #include <error_handler.hpp>
@@ -111,7 +112,50 @@ bool FunctionDeclaration::Validate(IContext* context) {
         return false;
     }
 
-    return body->Validate(functionContext.get());
+    bool bodyValid = body->Validate(functionContext.get());
+    
+    // Always validate the return type, even if there were errors in the body
+    // This ensures we catch return type mismatches in addition to other errors
+    bool returnTypeValid = true;
+    
+    // Get the last expression from the body to check its type
+    Expression* lastExpr = body->getLastExpression();
+    std::cout << "[DEBUG] FunctionDeclaration::Validate - Function '" << name << "' lastExpr = " << lastExpr << std::endl;
+    
+    if (lastExpr) {
+        std::cout << "[DEBUG] FunctionDeclaration::Validate - Found last expression, analyzing type..." << std::endl;
+        
+        // Create type registry and checker for type inference
+        TypeRegistry typeRegistry;
+        TypeChecker checker(typeRegistry);
+        
+        // Infer the type of the last expression
+        const Type* actualReturnType = checker.inferType(lastExpr, functionContext.get());
+        
+        if (actualReturnType) {
+            std::string actualTypeName = actualReturnType->toString();
+            std::cout << "[DEBUG] FunctionDeclaration::Validate - Inferred return type: " << actualTypeName << std::endl;
+            
+            // Check if the actual return type matches the declared return type
+            if (actualTypeName != returnType) {
+                SEMANTIC_ERROR("Function '" + name + "' declared to return " + returnType + 
+                             " but actually returns " + actualTypeName, location);
+                returnTypeValid = false;
+            } else {
+                std::cout << "[DEBUG] FunctionDeclaration::Validate - Return type matches!" << std::endl;
+            }
+        } else {
+            // Could not infer the return type - this might be an error in the expression
+            std::cout << "[DEBUG] FunctionDeclaration::Validate - Could not infer return type" << std::endl;
+            SEMANTIC_ERROR("Cannot determine return type of function '" + name + "'", location);
+            returnTypeValid = false;
+        }
+    } else {
+        std::cout << "[DEBUG] FunctionDeclaration::Validate - No last expression found" << std::endl;
+    }
+
+    // Return true only if both body validation and return type validation succeeded
+    return bodyValid && returnTypeValid;
 }
 
 FunctionDeclaration::~FunctionDeclaration() {

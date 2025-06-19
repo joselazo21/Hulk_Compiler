@@ -1,3 +1,111 @@
-function sum(x:Number) : Number => x + x;
+type Flyable {
+    altitude: Number = 0;
+    fly() : String => "Flying at altitude " @ self.altitude;
+    land() : String => {
+        self.altitude := 0;
+        "Landed safely";
+    };
+}
 
-let x : String = "hola" in sum(x);
+type Swimmable {
+    depth: Number = 0;
+    swim() : String => "Swimming at depth " @ self.depth;
+    surface() : String => {
+        self.depth := 0;
+        "Surfaced";
+    };
+}
+
+type Bird inherits Animal {
+    wing_span: Number = 50;
+    
+    speak() : String => "Tweet tweet!";
+    fly() : String => {
+        print(self.name @@ " spreads wings and takes flight");
+        "Flying with wingspan " @ self.wing_span;
+    };
+}
+
+type Fish inherits Animal {
+    fin_count: Number = 4;
+    
+    speak() : String => "Blub blub";
+    swim() : String => {
+        print(self.name @@ " swims gracefully");
+        "Swimming with " @ self.fin_count @@ " fins";
+    };
+}
+
+type Vehicle(brand, model) {
+    brand: String = brand;
+    model: String = model;
+    speed: Number = 0;
+    
+    start() : String => self.brand @@ " " @@ self.model @@ " started";
+    accelerate(amount: Number) : Number => {
+        self.speed := self.speed + amount;
+        print("Speed increased to: " @ self.speed);
+        self.speed;
+    };
+    info() : String => self.brand @@ " " @@ self.model @@ " going " @ self.speed @@ " mph";
+}
+
+type Car inherits Vehicle {
+    doors: Number = 4;
+    
+    honk() : String => "Beep beep!";
+    park() : String => {
+        self.speed := 0;
+        self.brand @@ " " @@ self.model @@ " parked";
+    };
+}
+
+type Motorcycle inherits Vehicle {
+    has_sidecar: Number = 0;
+    
+    wheelie() : String => 
+        if (self.speed > 20) self.brand @@ " does a wheelie!"
+        else "Too slow for wheelie";
+}
+
+let vehicles_test = {
+    let car = new Car("Toyota", "Camry") in
+    let bike = new Motorcycle("Harley", "Davidson") in
+    let generic_vehicle = new Vehicle("Generic", "Brand") in {
+        
+        print("=== Type Checking Tests ===");
+        print("Car is Vehicle: " @ (if (car is Vehicle) "true" else "false"));
+        print("Car is Car: " @ (if (car is Car) "true" else "false"));
+        print("Car is Motorcycle: " @ (if (car is Motorcycle) "true" else "false"));
+        
+        print("Bike is Vehicle: " @ (if (bike is Vehicle) "true" else "false"));
+        print("Bike is Motorcycle: " @ (if (bike is Motorcycle) "true" else "false"));
+        print("Bike is Car: " @ (if (bike is Car) "true" else "false"));
+        
+        # Polymorphic behavior
+        let current_vehicle : Vehicle = if (1 == 1) car else bike in {
+            print("Selected vehicle info: " @ current_vehicle.info());
+            current_vehicle.accelerate(30);
+            print("After acceleration: " @ current_vehicle.info());
+        };
+        
+        # Procesar cada vehículo individualmente sin usar lista
+        print("\nProcessing vehicles one by one:");
+        
+        # Procesar el carro
+        print("\nVehicle 0:");
+        print(car.start());
+        car.accelerate(25);
+        print("This is a car, honking: " @ car.honk());
+        
+        print("\nVehicle 1:");
+        print(bike.start());
+        bike.accelerate(25);
+        print("This is a motorcycle, attempting wheelie: " @ bike.wheelie());
+        
+        print("\nVehicle 2:");
+        print(generic_vehicle.start());
+        generic_vehicle.accelerate(25);
+        print("This is a generic vehicle");
+    };
+} in vehicles_test;

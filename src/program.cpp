@@ -37,6 +37,8 @@ void Program::printNode(int depth) {
 }
 
 bool Program::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     // First pass: check for duplicate type definitions and register all type names in the context
     // This allows types to reference each other (including inheritance)
     std::unordered_set<std::string> typeNames;
@@ -46,13 +48,15 @@ bool Program::Validate(IContext* context) {
         // Check for duplicate type definitions
         if (typeNames.find(typeName) != typeNames.end()) {
             SEMANTIC_ERROR("Type '" + typeName + "' is already defined", t->getLocation());
-            return false;
+            hasErrors = true;
+            continue; // Continue checking other types
         }
         
         // Check if trying to redefine builtin types
         if (typeName == "Number" || typeName == "String" || typeName == "Boolean" || typeName == "Object") {
             SEMANTIC_ERROR("Cannot redefine builtin type '" + typeName + "'", t->getLocation());
-            return false;
+            hasErrors = true;
+            continue; // Continue checking other types
         }
         
         typeNames.insert(typeName);
@@ -71,7 +75,7 @@ bool Program::Validate(IContext* context) {
     
     // Third pass: check for circular inheritance
     if (!checkCircularInheritance(context)) {
-        return false;
+        hasErrors = true;
     }
     
     // Fourth pass: register type definitions in context for method lookup
@@ -83,7 +87,9 @@ bool Program::Validate(IContext* context) {
     
     // Fifth pass: validate type definitions
     for (auto* t : types) {
-        if (!t->Validate(context)) return false;
+        if (!t->Validate(context)) {
+            hasErrors = true;
+        }
     }
     
     // Sixth pass: register all functions first (before validating their bodies or statements)
@@ -91,7 +97,7 @@ bool Program::Validate(IContext* context) {
         // Register function signature without validating body yet
         if (!context->addFunction(f->getName(), f->getParams(), f->getParamTypes(), f->getReturnType())) {
             SEMANTIC_ERROR("Function '" + f->getName() + "' already defined", f->getLocation());
-            return false;
+            hasErrors = true;
         }
     }
     
@@ -100,21 +106,26 @@ bool Program::Validate(IContext* context) {
         if (auto* func_decl = dynamic_cast<FunctionDeclaration*>(s)) {
             if (!context->addFunction(func_decl->getName(), func_decl->getParams(), func_decl->getParamTypes(), func_decl->getReturnType())) {
                 SEMANTIC_ERROR("Function '" + func_decl->getName() + "' already defined", func_decl->getLocation());
-                return false;
+                hasErrors = true;
             }
         }
     }
     
     // Seventh pass: validate function bodies
     for (auto* f : functions) {
-        if (!f->Validate(context)) return false;
+        if (!f->Validate(context)) {
+            hasErrors = true;
+        }
     }
     
     // Eighth pass: validate statements (now functions are already registered)
     for (auto* s : statements) {
-        if (!s->Validate(context)) return false;
+        if (!s->Validate(context)) {
+            hasErrors = true;
+        }
     }
-    return true;
+    
+    return !hasErrors;
 }
 
 llvm::Value* Program::codegen(CodeGenerator& generator) {
@@ -263,22 +274,38 @@ bool Program::hasCircularInheritanceHelper(const std::string& typeName, IContext
                                           std::unordered_set<std::string>& visited) {
     // If we're currently visiting this type, we found a cycle
     if (visiting.find(typeName) != visiting.end()) {
-        std::cerr << "Error: Circular inheritance detected involving type '" << typeName << "'" << std::endl;
+        // Find the TypeDefinition for this type to get its location
+        TypeDefinition* typeDefForError = nullptr;
+        for (auto* t : types) {
+            if (t->getName() == typeName) {
+                typeDefForError = t;
+                break;
+            }
+        }
         
-        // Print the inheritance chain for better error reporting
-        std::cerr << "Inheritance chain: ";
+        // Build the inheritance chain for better error reporting
+        std::string inheritanceChain = "";
         std::string current = typeName;
-        std::cerr << current;
+        inheritanceChain += current;
         do {
             std::string parent = context->getParentType(current);
             if (parent != "Object" && parent != current) {
-                std::cerr << " -> " << parent;
+                inheritanceChain += " -> " + parent;
                 current = parent;
             } else {
                 break;
             }
         } while (current != typeName && visiting.find(current) == visiting.end());
-        std::cerr << " -> " << typeName << " (circular)" << std::endl;
+        inheritanceChain += " -> " + typeName + " (circular)";
+        
+        // Report error with proper location information
+        if (typeDefForError) {
+            SEMANTIC_ERROR("Circular inheritance detected involving type '" + typeName + "'\nInheritance chain: " + inheritanceChain, typeDefForError->getLocation());
+        } else {
+            // Fallback to stderr if we can't find the type definition
+            std::cerr << "Error: Circular inheritance detected involving type '" << typeName << "'" << std::endl;
+            std::cerr << "Inheritance chain: " << inheritanceChain << std::endl;
+        }
         
         return true;
     }
@@ -296,9 +323,22 @@ bool Program::hasCircularInheritanceHelper(const std::string& typeName, IContext
     
     // Check if parent type exists (unless it's Object)
     if (parentType != "Object") {
+        // Find the TypeDefinition for this type to get its location
+        TypeDefinition* currentTypeDef = nullptr;
+        for (auto* t : types) {
+            if (t->getName() == typeName) {
+                currentTypeDef = t;
+                break;
+            }
+        }
+        
         // First check if trying to inherit from builtin types
         if (parentType == "Number" || parentType == "String" || parentType == "Boolean") {
-            std::cerr << "Error: Cannot inherit from builtin type '" << parentType << "'" << std::endl;
+            if (currentTypeDef) {
+                SEMANTIC_ERROR("Cannot inherit from builtin type '" + parentType + "'", currentTypeDef->getLocation());
+            } else {
+                std::cerr << "Error: Cannot inherit from builtin type '" << parentType << "'" << std::endl;
+            }
             visiting.erase(typeName);
             return true;
         }
@@ -313,7 +353,11 @@ bool Program::hasCircularInheritanceHelper(const std::string& typeName, IContext
         }
         
         if (!parentExists) {
-            std::cerr << "Error: Parent type '" << parentType << "' of type '" << typeName << "' is not defined" << std::endl;
+            if (currentTypeDef) {
+                SEMANTIC_ERROR("Parent type '" + parentType + "' of type '" + typeName + "' is not defined", currentTypeDef->getLocation());
+            } else {
+                std::cerr << "Error: Parent type '" << parentType << "' of type '" << typeName << "' is not defined" << std::endl;
+            }
             visiting.erase(typeName);
             return true; // Treat undefined parent as error
         }

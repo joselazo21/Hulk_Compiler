@@ -156,3 +156,41 @@ llvm::Value* BlockStatement::generateExecutableCode(CodeGenerator& cg, bool only
     }
     return lastValue;
 }
+
+Expression* BlockStatement::getLastExpression() const {
+    // Find the last expression statement in the block
+    for (auto it = statements.rbegin(); it != statements.rend(); ++it) {
+        Statement* stmt = *it;
+        
+        // If it's an expression statement, return its expression
+        if (auto exprStmt = dynamic_cast<ExpressionStatement*>(stmt)) {
+            return exprStmt->getExpression();
+        }
+        
+        // If it's a return statement, we don't have a direct expression to return
+        // (the return type checking should be handled elsewhere)
+        if (dynamic_cast<ReturnStatement*>(stmt)) {
+            return nullptr;
+        }
+        
+        // Skip function declarations as they don't contribute to the return value
+        if (dynamic_cast<FunctionDeclaration*>(stmt)) {
+            continue;
+        }
+        
+        // For ForStatement, we need to analyze its body to determine return type
+        if (auto forStmt = dynamic_cast<ForStatement*>(stmt)) {
+            // Get the last expression from the for loop body
+            BlockStatement* forBody = forStmt->getBody();
+            if (forBody) {
+                return forBody->getLastExpression();
+            }
+            return nullptr;
+        }
+        
+        // For other statement types, we can't extract an expression
+        // This might need to be extended based on your language's semantics
+    }
+    
+    return nullptr; // No expression found
+}

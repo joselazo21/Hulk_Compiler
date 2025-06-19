@@ -28,18 +28,22 @@ void UnaryOperation::printNode(int depth) {
 
 // Validate implementation
 bool UnaryOperation::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     if (!operand->Validate(context)) {
-        return false;
+        hasErrors = true;
     }
     
     // For now, we only support unary minus on numeric expressions
     if (operation == "-") {
         // The operand should be a valid expression
-        return true;
+        return !hasErrors;
     }
     
     SEMANTIC_ERROR("Operador unario no soportado: " + operation, location);
-    return false;
+    hasErrors = true;
+    
+    return !hasErrors;
 }
 
 // Code generation implementation
