@@ -58,7 +58,12 @@ char* process_string_escapes(const char* input) {
 ":="              { printf("<ASSIGN>\n"); return ASSIGN; }
 "="               { printf("<ASSIGN>\n"); return ASSIGN; }
 
-# Palabras clave
+# Palabras clave (deben ir antes que los identificadores)
+"true"            { printf("<TRUE>\n"); return TRUE; }
+"false"           { printf("<FALSE>\n"); return FALSE; }
+"Boolean"         { printf("<BOOLEAN_TYPE>\n"); return BOOLEAN_TYPE; }
+"Number"          { printf("<NUMBER_TYPE>\n"); return NUMBER_TYPE; }
+"String"          { printf("<STRING_TYPE>\n"); return STRING_TYPE; }
 "let"             { printf("<LET>\n"); return LET; }
 "print"           { printf("<PRINT>\n"); return PRINT; }
 "function"        { printf("<FUNCTION>\n"); return FUNCTION; }

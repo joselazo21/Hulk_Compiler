@@ -88,6 +88,8 @@ void yyerror(const char *s) {
 %token EQ NEQ LE GE AND OR
 %token ASSIGN
 %token TYPE INHERITS NEW SELF BASE IS AS
+%token TRUE FALSE
+%token BOOLEAN_TYPE NUMBER_TYPE STRING_TYPE
 %token '{' '}' '.' '[' ']' '|' ':'
 
 // Precedencias y asociatividades
@@ -154,7 +156,7 @@ void yyerror(const char *s) {
 %type <type_def> type_definition
 %type <type_list> type_list
 %type <field_list> member_list
-%type <type_annotation> opt_type_annotation
+%type <type_annotation> opt_type_annotation type_name
 %type <typed_param> typed_param
 %type <typed_param_list> typed_param_list
 %type <node> program_item
@@ -216,7 +218,8 @@ type_definition
         
         // Separate fields and methods from the unified member_list
         auto fields = new std::vector<std::pair<std::string, Expression*>>();
-        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        auto typedMethods = new std::vector<std::pair<std::string, MethodInfo>>();
+        bool hasTypedMethods = false;
         
         for (const auto& member : *$4) {
             if (member.first.find("(") != std::string::npos) {
@@ -244,7 +247,15 @@ type_definition
                     }
                 }
                 
-                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+                // Check if method has return type annotation
+                std::string returnType = "Number"; // Default
+                size_t colon_pos = member.first.find("):");
+                if (colon_pos != std::string::npos) {
+                    returnType = member.first.substr(colon_pos + 2);
+                    hasTypedMethods = true;
+                }
+                
+                typedMethods->push_back(std::make_pair(method_name, MethodInfo(params, returnType, member.second)));
             } else {
                 // It's a field
                 fields->push_back(member);
@@ -256,19 +267,20 @@ type_definition
             $2,
             std::vector<std::string>(), // empty parameter list
             *fields,
-            *methods
+            *typedMethods
         );
         free($2);
         delete $4;
         delete fields;
-        delete methods;
+        delete typedMethods;
     }
     | TYPE ID '(' typed_param_list ')' '{' member_list '}' {
         // Type with parameters
         
         // Separate fields and methods from the unified member_list
         auto fields = new std::vector<std::pair<std::string, Expression*>>();
-        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        auto typedMethods = new std::vector<std::pair<std::string, MethodInfo>>();
+        bool hasTypedMethods = false;
         
         for (const auto& member : *$7) {
             if (member.first.find("(") != std::string::npos) {
@@ -296,7 +308,15 @@ type_definition
                     }
                 }
                 
-                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+                // Check if method has return type annotation
+                std::string returnType = "Number"; // Default
+                size_t colon_pos = member.first.find("):");
+                if (colon_pos != std::string::npos) {
+                    returnType = member.first.substr(colon_pos + 2);
+                    hasTypedMethods = true;
+                }
+                
+                typedMethods->push_back(std::make_pair(method_name, MethodInfo(params, returnType, member.second)));
             } else {
                 // It's a field
                 fields->push_back(member);
@@ -314,18 +334,19 @@ type_definition
             $2,
             params,
             *fields,
-            *methods
+            *typedMethods
         );
         free($2);
         delete $4;
         delete $7;
         delete fields;
-        delete methods;
+        delete typedMethods;
     }
     | TYPE ID INHERITS ID '{' member_list '}' {
         // Type with inheritance but no parameters and no parent arguments
         auto fields = new std::vector<std::pair<std::string, Expression*>>();
-        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        auto typedMethods = new std::vector<std::pair<std::string, MethodInfo>>();
+        bool hasTypedMethods = false;
         
         for (const auto& member : *$6) {
             if (member.first.find("(") != std::string::npos) {
@@ -349,7 +370,15 @@ type_definition
                     }
                 }
                 
-                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+                // Check if method has return type annotation
+                std::string returnType = "Number"; // Default
+                size_t colon_pos = member.first.find("):");
+                if (colon_pos != std::string::npos) {
+                    returnType = member.first.substr(colon_pos + 2);
+                    hasTypedMethods = true;
+                }
+                
+                typedMethods->push_back(std::make_pair(method_name, MethodInfo(params, returnType, member.second)));
             } else {
                 fields->push_back(member);
             }
@@ -360,19 +389,20 @@ type_definition
             $2,
             std::vector<std::string>(), // empty parameter list
             *fields,
-            *methods,
+            *typedMethods,
             $4  // parent type
         );
         free($2);
         free($4);
         delete $6;
         delete fields;
-        delete methods;
+        delete typedMethods;
     }
     | TYPE ID INHERITS ID '(' expr_list ')' '{' member_list '}' {
         // Type with inheritance, no parameters but with parent arguments
         auto fields = new std::vector<std::pair<std::string, Expression*>>();
-        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        auto typedMethods = new std::vector<std::pair<std::string, MethodInfo>>();
+        bool hasTypedMethods = false;
         
         for (const auto& member : *$9) {
             if (member.first.find("(") != std::string::npos) {
@@ -398,7 +428,15 @@ type_definition
                     }
                 }
                 
-                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+                // Check if method has return type annotation
+                std::string returnType = "Number"; // Default
+                size_t colon_pos = member.first.find("):");
+                if (colon_pos != std::string::npos) {
+                    returnType = member.first.substr(colon_pos + 2);
+                    hasTypedMethods = true;
+                }
+                
+                typedMethods->push_back(std::make_pair(method_name, MethodInfo(params, returnType, member.second)));
             } else {
                 fields->push_back(member);
             }
@@ -409,7 +447,7 @@ type_definition
             $2,
             std::vector<std::string>(), // empty parameter list
             *fields,
-            *methods,
+            *typedMethods,
             $4,  // parent type
             *$6  // parent arguments
         );
@@ -418,12 +456,13 @@ type_definition
         delete $6;
         delete $9;
         delete fields;
-        delete methods;
+        delete typedMethods;
     }
     | TYPE ID '(' typed_param_list ')' INHERITS ID '{' member_list '}' {
         // Type with inheritance but no parent arguments
         auto fields = new std::vector<std::pair<std::string, Expression*>>();
-        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        auto typedMethods = new std::vector<std::pair<std::string, MethodInfo>>();
+        bool hasTypedMethods = false;
         
         for (const auto& member : *$9) {
             if (member.first.find("(") != std::string::npos) {
@@ -447,7 +486,15 @@ type_definition
                     }
                 }
                 
-                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+                // Check if method has return type annotation
+                std::string returnType = "Number"; // Default
+                size_t colon_pos = member.first.find("):");
+                if (colon_pos != std::string::npos) {
+                    returnType = member.first.substr(colon_pos + 2);
+                    hasTypedMethods = true;
+                }
+                
+                typedMethods->push_back(std::make_pair(method_name, MethodInfo(params, returnType, member.second)));
             } else {
                 fields->push_back(member);
             }
@@ -464,7 +511,7 @@ type_definition
             $2,
             params,
             *fields,
-            *methods,
+            *typedMethods,
             $7  // parent type
         );
         free($2);
@@ -472,12 +519,13 @@ type_definition
         delete $4;
         delete $9;
         delete fields;
-        delete methods;
+        delete typedMethods;
     }
     | TYPE ID '(' typed_param_list ')' INHERITS ID '(' expr_list ')' '{' member_list '}' {
         // Type with inheritance and parent arguments
         auto fields = new std::vector<std::pair<std::string, Expression*>>();
-        auto methods = new std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>();
+        auto typedMethods = new std::vector<std::pair<std::string, MethodInfo>>();
+        bool hasTypedMethods = false;
         
         for (const auto& member : *$12) {
             if (member.first.find("(") != std::string::npos) {
@@ -501,7 +549,15 @@ type_definition
                     }
                 }
                 
-                methods->push_back(std::make_pair(member.first, std::make_pair(params, member.second)));
+                // Check if method has return type annotation
+                std::string returnType = "Number"; // Default
+                size_t colon_pos = member.first.find("):");
+                if (colon_pos != std::string::npos) {
+                    returnType = member.first.substr(colon_pos + 2);
+                    hasTypedMethods = true;
+                }
+                
+                typedMethods->push_back(std::make_pair(method_name, MethodInfo(params, returnType, member.second)));
             } else {
                 fields->push_back(member);
             }
@@ -518,7 +574,7 @@ type_definition
             $2,
             params,
             *fields,
-            *methods,
+            *typedMethods,
             $7,  // parent type
             *$9  // parent arguments
         );
@@ -528,7 +584,7 @@ type_definition
         delete $9;
         delete $12;
         delete fields;
-        delete methods;
+        delete typedMethods;
     }
     ;
 
@@ -539,13 +595,13 @@ member_list
         $$->push_back(std::make_pair($2, $4));
         free($2);
     }
-    | member_list ID ':' ID ASSIGN expression ';' {
+    | member_list ID ':' type_name ASSIGN expression ';' {
         $$ = $1;
         // For typed fields, we store the field name with type annotation
-        std::string fieldWithType = std::string($2) + ":" + std::string($4);
+        std::string fieldWithType = std::string($2) + ":" + *$4;
         $$->push_back(std::make_pair(fieldWithType, $6));
         free($2);
-        free($4);
+        delete $4;
     }
     | member_list ID '(' param_list ')' ARROW expression ';' {
         $$ = $1;
@@ -561,7 +617,7 @@ member_list
         free($2);
         delete $4;
     }
-    | member_list ID '(' param_list ')' ':' ID ARROW expression ';' {
+    | member_list ID '(' param_list ')' ':' type_name ARROW expression ';' {
         $$ = $1;
         // Store method with return type annotation
         std::string signature = $2;
@@ -570,10 +626,10 @@ member_list
             if (i > 0) signature += ",";
             signature += (*$4)[i];
         }
-        signature += "):" + std::string($7);
+        signature += "):" + *$7;
         $$->push_back(std::make_pair(signature, $9));
         free($2);
-        free($7);
+        delete $7;
         delete $4;
     }
     | member_list ID '(' typed_param_list ')' ARROW expression ';' {
@@ -593,7 +649,7 @@ member_list
         free($2);
         delete $4;
     }
-    | member_list ID '(' typed_param_list ')' ':' ID ARROW expression ';' {
+    | member_list ID '(' typed_param_list ')' ':' type_name ARROW expression ';' {
         $$ = $1;
         // Store method with typed parameters and return type
         std::string signature = $2;
@@ -605,10 +661,10 @@ member_list
                 signature += ":" + (*$4)[i].second;
             }
         }
-        signature += "):" + std::string($7);
+        signature += "):" + *$7;
         $$->push_back(std::make_pair(signature, $9));
         free($2);
-        free($7);
+        delete $7;
         delete $4;
     }
     ;
@@ -642,7 +698,7 @@ function_declaration
         free($2);
         delete $4;
     }
-    | FUNCTION ID '(' typed_param_list ')' ':' ID ARROW expression ';' %prec FUNCTION_PREC {
+    | FUNCTION ID '(' typed_param_list ')' ':' type_name ARROW expression ';' %prec FUNCTION_PREC {
         std::vector<Statement*> statements;
         statements.push_back(new ReturnStatement(SourceLocation(yylineno, @9.first_column), $9)); // loc for expression $9
         
@@ -659,11 +715,11 @@ function_declaration
             $2,
             params,
             paramTypes,
-            $7, // return type annotation
+            *$7, // return type annotation
             new BlockStatement(SourceLocation(yylineno, @8.first_column), statements) // loc for ARROW
         );
         free($2);
-        free($7);
+        delete $7;
         delete $4;
     }
     | FUNCTION ID '(' typed_param_list ')' '{' statement_list '}' %prec FUNCTION_PREC {
@@ -687,7 +743,7 @@ function_declaration
         delete $4;
         delete $7;
     }
-    | FUNCTION ID '(' typed_param_list ')' ':' ID '{' statement_list '}' %prec FUNCTION_PREC {
+    | FUNCTION ID '(' typed_param_list ')' ':' type_name '{' statement_list '}' %prec FUNCTION_PREC {
         // Extract parameter names and types
         std::vector<std::string> params;
         std::vector<std::string> paramTypes;
@@ -701,11 +757,11 @@ function_declaration
             $2,
             params,
             paramTypes,
-            $7, // return type annotation
+            *$7, // return type annotation
             new BlockStatement(SourceLocation(yylineno, @8.first_column), *$9)
         );
         free($2);
-        free($7);
+        delete $7;
         delete $4;
         delete $9;
     }
@@ -719,13 +775,20 @@ param_list
 
 // Type annotation rules
 opt_type_annotation
-    : /* empty */ { $$ = nullptr; }
-    | ':' ID { $$ = new std::string($2); free($2); }
+    : /* empty */ { $ = nullptr; }
+    | ':' type_name { $ = new std::string(*$2); delete $2; }
+    ;
+
+type_name
+    : ID { $$ = new std::string($1); free($1); }
+    | BOOLEAN_TYPE { $$ = new std::string("Boolean"); }
+    | NUMBER_TYPE { $$ = new std::string("Number"); }
+    | STRING_TYPE { $$ = new std::string("String"); }
     ;
 
 typed_param
     : ID { $$ = new std::pair<std::string, std::string>($1, ""); free($1); }
-    | ID ':' ID { $$ = new std::pair<std::string, std::string>($1, $3); free($1); free($3); }
+    | ID ':' type_name { $$ = new std::pair<std::string, std::string>($1, *$3); free($1); delete $3; }
     ;
 
 typed_param_list
@@ -801,32 +864,30 @@ for_loop_expr
         //     let i = __iter_i.current() in {
         //       body_expression; // Execute the body expression directly
         //     }
-        //   }
+        //   };
+        //   0  // Return a default value after the loop completes
         // }
         
         // Create the inner let-in that binds the loop variable
         auto getCurrentExpr = new FunctionCall(idLoc, iterName + ".current", {});
         
         // Create the inner let-in with the loop variable and execute the body expression
-        // Ensure the body expression is properly wrapped in a block expression
         auto bodyExpr = $7;
-        auto letInBody = new BlockExpression(SourceLocation(yylineno, @7.first_column), // loc of $7
-            { new ExpressionStatement(SourceLocation(yylineno, @7.first_column), bodyExpr) });
-        auto letInVar = new LetIn(SourceLocation(yylineno, @7.first_column), // loc of $7
-            { std::make_pair(loopVarName, getCurrentExpr) }, letInBody);
+        auto letInBody = new BlockExpression(bodyExpr->getLocation(), { new ExpressionStatement(bodyExpr->getLocation(), bodyExpr) });
+        auto letInVar = new LetIn(bodyExpr->getLocation(), { std::make_pair(loopVarName, getCurrentExpr) }, letInBody);
         
-        // Create the while loop body
-        auto whileBodyStmt = new BlockStatement(SourceLocation(yylineno, @7.first_column), // loc of $7
-            { new ExpressionStatement(SourceLocation(yylineno, @7.first_column), letInVar) }); // loc of $7
+        // Create the while loop body, ensuring it's a BlockStatement
+        auto whileBodyStmt = new BlockStatement(bodyExpr->getLocation(), { new ExpressionStatement(bodyExpr->getLocation(), letInVar) });
         
         // Create the while condition (iterator.next())
         auto getNextExpr = new FunctionCall(forLoc, iterName + ".next", {});
         auto whileStmt = new WhileStatement(forLoc, getNextExpr, whileBodyStmt);
         
-        // Create the final block that just executes the while loop
+        // Create the final block that executes the while loop and returns a default value
+        auto defaultReturn = new Number(forLoc, 0.0);
         auto outerLetBody = new BlockExpression(forLoc, 
-            { whileStmt });
-        
+            { whileStmt, new ExpressionStatement(forLoc, defaultReturn) });
+
         // Create the let-in that initializes the iterator
         $$ = new LetIn(forLoc, { 
             std::make_pair(iterName, $5) // $5 is the range expression
@@ -960,6 +1021,8 @@ expression
     | '-' expression %prec UMINUS { $$ = new UnaryOperation(SourceLocation(yylineno, @1.first_column), $2, "-"); }
     | NUMBER                     { $$ = new Number(SourceLocation(yylineno, @1.first_column), $1); }
     | STRING                     { $$ = new StringLiteral(SourceLocation(yylineno, @1.first_column), $1); free($1); }
+    | TRUE                       { $$ = new Boolean(SourceLocation(yylineno, @1.first_column), true); }
+    | FALSE                      { $$ = new Boolean(SourceLocation(yylineno, @1.first_column), false); }
     | '(' expression ')'         { $$ = $2; }
     | block_expr
     | while_expr
@@ -1031,33 +1094,33 @@ typed_binding_list_new // Produces std::vector<LetBinding>*
         $$->push_back(LetBinding(std::string($1), "", $3));
         free($1);
     }
-    | ID ':' ID ASSIGN expression { // A single binding with type annotation
+    | ID ':' type_name ASSIGN expression { // A single binding with type annotation
         $$ = new std::vector<LetBinding>();
-        $$->push_back(LetBinding(std::string($1), std::string($3), $5));
+        $$->push_back(LetBinding(std::string($1), *$3, $5));
         free($1);
-        free($3);
+        delete $3;
     }
     | typed_binding_list_new ',' ID ASSIGN expression { // Subsequent bindings without type annotation
         $$ = $1;
         $$->push_back(LetBinding(std::string($3), "", $5));
         free($3);
     }
-    | typed_binding_list_new ',' ID ':' ID ASSIGN expression { // Subsequent bindings with type annotation
+    | typed_binding_list_new ',' ID ':' type_name ASSIGN expression { // Subsequent bindings with type annotation
         $$ = $1;
-        $$->push_back(LetBinding(std::string($3), std::string($5), $7));
+        $$->push_back(LetBinding(std::string($3), *$5, $7));
         free($3);
-        free($5);
+        delete $5;
     }
     | typed_binding_list_new ',' LET ID ASSIGN expression { // Subsequent bindings with LET keyword
         $$ = $1;
         $$->push_back(LetBinding(std::string($4), "", $6));
         free($4);
     }
-    | typed_binding_list_new ',' LET ID ':' ID ASSIGN expression { // Subsequent bindings with LET keyword and type annotation
+    | typed_binding_list_new ',' LET ID ':' type_name ASSIGN expression { // Subsequent bindings with LET keyword and type annotation
         $$ = $1;
-        $$->push_back(LetBinding(std::string($4), std::string($6), $8));
+        $$->push_back(LetBinding(std::string($4), *$6, $8));
         free($4);
-        free($6);
+        delete $6;
     }
     ;
 
@@ -1068,36 +1131,36 @@ binding_list // Produces std::vector<std::pair<std::string, Expression*>>*
         $$->push_back(std::make_pair(std::string($1), $3));
         free($1);
     }
-    | ID ':' ID ASSIGN expression { // A single binding with type annotation
+    | ID ':' type_name ASSIGN expression { // A single binding with type annotation
         $$ = new std::vector<std::pair<std::string, Expression*>>();
         // Store just the variable name, ignore type annotation for now (for backward compatibility)
         $$->push_back(std::make_pair(std::string($1), $5));
         free($1);
-        free($3);
+        delete $3;
     }
     | binding_list ',' ID ASSIGN expression { // Subsequent bindings without type annotation
         $$ = $1;
         $$->push_back(std::make_pair(std::string($3), $5));
         free($3);
     }
-    | binding_list ',' ID ':' ID ASSIGN expression { // Subsequent bindings with type annotation
+    | binding_list ',' ID ':' type_name ASSIGN expression { // Subsequent bindings with type annotation
         $$ = $1;
         // Store just the variable name, ignore type annotation for now (for backward compatibility)
         $$->push_back(std::make_pair(std::string($3), $7));
         free($3);
-        free($5);
+        delete $5;
     }
     | binding_list ',' LET ID ASSIGN expression { // Subsequent bindings with LET keyword
         $$ = $1;
         $$->push_back(std::make_pair(std::string($4), $6));
         free($4);
     }
-    | binding_list ',' LET ID ':' ID ASSIGN expression { // Subsequent bindings with LET keyword and type annotation
+    | binding_list ',' LET ID ':' type_name ASSIGN expression { // Subsequent bindings with LET keyword and type annotation
         $$ = $1;
         // Store just the variable name, ignore type annotation for now (for backward compatibility)
         $$->push_back(std::make_pair(std::string($4), $8));
         free($4);
-        free($6);
+        delete $6;
     }
     ;
 

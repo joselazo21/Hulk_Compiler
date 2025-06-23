@@ -55,11 +55,30 @@ bool FunctionDeclaration::Validate(IContext* context) {
 
     // --- REGISTRA LA FUNCIÓN ANTES DE VALIDAR EL CUERPO (si no está ya registrada) ---
     // Check if function is already registered (it might have been registered in Program::Validate)
+    std::cout << "[DEBUG] FunctionDeclaration::Validate for function '" << name << "' with params: [";
+    for (size_t i = 0; i < paramTypes.size(); i++) {
+        if (i > 0) std::cout << ", ";
+        std::cout << params[i] << ":" << paramTypes[i];
+    }
+    std::cout << "] -> " << returnType << std::endl;
+    
     if (!context->isDefined(name, params.size())) {
+        std::cout << "[DEBUG] Function not defined, adding to context" << std::endl;
         if (!context->addFunction(name, params, paramTypes, returnType)) {
             SEMANTIC_ERROR("Function '" + name + "' already defined", location);
             return false;
         }
+    } else {
+        std::cout << "[DEBUG] Function already defined, checking types" << std::endl;
+        // Check if the existing function has the correct types
+        std::vector<std::string> existingParamTypes = context->getFunctionParamTypes(name);
+        std::string existingReturnType = context->getFunctionReturnType(name);
+        std::cout << "[DEBUG] Existing function types: [";
+        for (size_t i = 0; i < existingParamTypes.size(); i++) {
+            if (i > 0) std::cout << ", ";
+            std::cout << existingParamTypes[i];
+        }
+        std::cout << "] -> " << existingReturnType << std::endl;
     }
 
     // Create function context
@@ -120,13 +139,13 @@ bool FunctionDeclaration::Validate(IContext* context) {
     
     // Get the last expression from the body to check its type
     Expression* lastExpr = body->getLastExpression();
-    std::cout << "[DEBUG] FunctionDeclaration::Validate - Function '" << name << "' lastExpr = " << lastExpr << std::endl;
+
     
     if (lastExpr) {
-        std::cout << "[DEBUG] FunctionDeclaration::Validate - Found last expression, analyzing type..." << std::endl;
+
         
         // Create type registry and checker for type inference
-        TypeRegistry typeRegistry;
+        TypeRegistry typeRegistry(functionContext.get());
         TypeChecker checker(typeRegistry);
         
         // Infer the type of the last expression
@@ -134,7 +153,7 @@ bool FunctionDeclaration::Validate(IContext* context) {
         
         if (actualReturnType) {
             std::string actualTypeName = actualReturnType->toString();
-            std::cout << "[DEBUG] FunctionDeclaration::Validate - Inferred return type: " << actualTypeName << std::endl;
+
             
             // Check if the actual return type matches the declared return type
             if (actualTypeName != returnType) {
@@ -142,16 +161,16 @@ bool FunctionDeclaration::Validate(IContext* context) {
                              " but actually returns " + actualTypeName, location);
                 returnTypeValid = false;
             } else {
-                std::cout << "[DEBUG] FunctionDeclaration::Validate - Return type matches!" << std::endl;
+
             }
         } else {
             // Could not infer the return type - this might be an error in the expression
-            std::cout << "[DEBUG] FunctionDeclaration::Validate - Could not infer return type" << std::endl;
+
             SEMANTIC_ERROR("Cannot determine return type of function '" + name + "'", location);
             returnTypeValid = false;
         }
     } else {
-        std::cout << "[DEBUG] FunctionDeclaration::Validate - No last expression found" << std::endl;
+
     }
 
     // Return true only if both body validation and return type validation succeeded
@@ -258,10 +277,13 @@ llvm::Value* FunctionDeclaration::generateExecutableCode(CodeGenerator& cg, bool
 
     llvm::Value* retVal = body->codegen(cg);
 
+    // Add terminators to blocks that need them
     for (auto& block : *function) {
         if (!block.getTerminator()) {
+            std::string blockName = block.getName().str();
             cg.getBuilder()->SetInsertPoint(&block);
-            // Return appropriate default value based on return type
+            
+            // Add return statement for all blocks that need terminators
             if (returnType == "String") {
                 cg.getBuilder()->CreateRet(
                     llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(cg.getContext())));
@@ -386,13 +408,13 @@ llvm::Value* FunctionDeclaration::codegen(CodeGenerator& generator) {
     // Generate function body
     llvm::Value* retVal = body->codegen(generator);
     
-    // Ensure function returns
-    llvm::BasicBlock* entryBlock = &function->getEntryBlock();
-    // --- MODIFICACIÓN: Asegura terminador en todos los bloques sin terminador ---
+    // Add terminators to blocks that need them
     for (auto& block : *function) {
         if (!block.getTerminator()) {
+            std::string blockName = block.getName().str();
             generator.getBuilder()->SetInsertPoint(&block);
-            // Return appropriate default value based on return type
+            
+            // Add return statement for all blocks that need terminators
             if (returnType == "String") {
                 generator.getBuilder()->CreateRet(
                     llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(generator.getContext())));

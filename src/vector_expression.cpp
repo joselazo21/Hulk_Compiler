@@ -108,7 +108,7 @@ llvm::Value* VectorExpression::codegen(CodeGenerator& generator) {
             if (auto* numberNode = dynamic_cast<Number*>(elem)) {
                 // Get the value directly from the Number node (keep as double)
                 values.push_back(numberNode->getValue());
-                std::cout << "[DEBUG] Added number value: " << numberNode->getValue() << std::endl;
+
             } else {
                 // Try to generate code and extract constant
                 llvm::Value* val = elem->codegen(generator);
@@ -119,10 +119,10 @@ llvm::Value* VectorExpression::codegen(CodeGenerator& generator) {
                 // Support both integers and floats
                 if (auto* constInt = llvm::dyn_cast<llvm::ConstantInt>(val)) {
                     values.push_back(static_cast<double>(constInt->getSExtValue()));
-                    std::cout << "[DEBUG] Added constant int value: " << constInt->getSExtValue() << std::endl;
+
                 } else if (auto* constFloat = llvm::dyn_cast<llvm::ConstantFP>(val)) {
                     values.push_back(constFloat->getValueAPF().convertToDouble());
-                    std::cout << "[DEBUG] Added constant float value: " << constFloat->getValueAPF().convertToDouble() << std::endl;
+
                 } else {
                     SEMANTIC_ERROR("Only numeric literals are supported in explicit vectors for now", location);
                     return nullptr;
@@ -131,17 +131,17 @@ llvm::Value* VectorExpression::codegen(CodeGenerator& generator) {
         }
         // Get the destination variable name from context
         std::string iterName = generator.getCurrentLetInVariableName();
-        std::cout << "[DEBUG] VectorExpression::codegen - getCurrentLetInVariableName() returned: '" << iterName << "'" << std::endl;
+
         if (iterName.empty()) {
             // Fallback for when not in let-in context
             static int anonVecCounter = 0;
             iterName = "anon_vec_" + std::to_string(anonVecCounter++);
-            std::cout << "[DEBUG] VectorExpression::codegen - using fallback name: '" << iterName << "'" << std::endl;
+
         }
 
         // Store vector data using the determined name
-        std::cout << "[DEBUG] VectorExpression::codegen - storing vector data for: '" << iterName << "'" << std::endl;
-        std::cout << "[DEBUG] Vector values: ";
+
+
         for (double val : values) {
             std::cout << val << " ";
         }
@@ -159,7 +159,7 @@ llvm::Value* VectorExpression::codegen(CodeGenerator& generator) {
         llvm::Value* rangeResult = generator.getBuilder()->CreateCall(rangeFunc, args, "vector_range");
         
         // Asegurarnos de que el rango se asocie con los valores del vector
-        std::cout << "[DEBUG] Created range for vector with size: " << values.size() << std::endl;
+
         
         return rangeResult;
     }
@@ -209,16 +209,16 @@ bool VectorIndexExpression::Validate(IContext* context) {
 
 llvm::Value* VectorIndexExpression::codegen(CodeGenerator& generator) {
     // Generate code for vector indexing
-    std::cout << "[DEBUG] VectorIndexExpression::codegen - Starting vector indexing" << std::endl;
+
     
     // First, check if the vector is a variable that has associated vector data
     if (auto* varNode = dynamic_cast<Variable*>(vector)) {
         std::string varName = varNode->getName();
-        std::cout << "[DEBUG] VectorIndexExpression::codegen - Vector is variable: " << varName << std::endl;
+
         
         // Check if this variable has vector data stored
         if (generator.hasVectorDataForIterator(varName)) {
-            std::cout << "[DEBUG] VectorIndexExpression::codegen - Found vector data for variable: " << varName << std::endl;
+
             
             // Generate the index value
             llvm::Value* indexVal = index->codegen(generator);
@@ -238,7 +238,7 @@ llvm::Value* VectorIndexExpression::codegen(CodeGenerator& generator) {
                     llvm::Type::getInt32Ty(generator.getContext()),
                     "float_to_int_index"
                 );
-                std::cout << "[DEBUG] VectorIndexExpression::codegen - Converted float index to integer" << std::endl;
+
             } else {
                 SEMANTIC_ERROR("Vector index must be a number (integer or float)", location);
                 return nullptr;
@@ -249,12 +249,12 @@ llvm::Value* VectorIndexExpression::codegen(CodeGenerator& generator) {
             llvm::GlobalVariable* vectorArray = generator.getModule()->getGlobalVariable(arrayName);
             
             if (!vectorArray) {
-                std::cout << "[DEBUG] VectorIndexExpression::codegen - No global array found, searching all globals..." << std::endl;
+
                 // Search through all globals to find a vector data array
                 for (auto &G : generator.getModule()->globals()) {
                     std::string globalName = G.getName().str();
                     if (globalName.find("__vector_data_") == 0) {
-                        std::cout << "[DEBUG] VectorIndexExpression::codegen - Using vector data global: " << globalName << std::endl;
+
                         vectorArray = &G;
                         break;
                     }
@@ -262,7 +262,7 @@ llvm::Value* VectorIndexExpression::codegen(CodeGenerator& generator) {
             }
             
             if (vectorArray) {
-                std::cout << "[DEBUG] VectorIndexExpression::codegen - Using global array: " << vectorArray->getName().str() << std::endl;
+
                 
                 // Get the vector data to determine bounds
                 std::vector<double> vectorData = generator.getVectorDataForIterator(varName);
@@ -348,7 +348,7 @@ llvm::Value* VectorIndexExpression::codegen(CodeGenerator& generator) {
                     result->addIncoming(outOfBoundsResult, outOfBoundsBB);
                     result->addIncoming(elementValue, inBoundsBB);
                     
-                    std::cout << "[DEBUG] VectorIndexExpression::codegen - Successfully generated vector indexing code" << std::endl;
+
                     return result;
                 } else {
                     SEMANTIC_ERROR("No vector data found for variable: " + varName, location);
@@ -359,7 +359,7 @@ llvm::Value* VectorIndexExpression::codegen(CodeGenerator& generator) {
                 return nullptr;
             }
         } else {
-            std::cout << "[DEBUG] VectorIndexExpression::codegen - No vector data for variable: " << varName << std::endl;
+
         }
     }
     

@@ -326,6 +326,23 @@ public:
     double getValue() const { return value; }
 };
 
+// Boolean class
+class Boolean : public Expression {
+private:
+    bool value;
+
+public:
+    Boolean(bool value);
+    Boolean(const SourceLocation& loc, bool value);
+    std::string toString() override;
+    void printNode(int depth) override;
+    bool Validate(IContext* context) override;
+    llvm::Value* codegen(CodeGenerator& generator) override;
+    ~Boolean();
+    
+    bool getValue() const { return value; }
+};
+
 // Assignment class
 class Assignment : public Statement {
 private:
@@ -417,6 +434,9 @@ public:
     bool Validate(IContext* context) override;
     llvm::Value* codegen(CodeGenerator& generator) override;
     ~FunctionCall();
+    
+    // Getter for function name
+    const std::string& getFunctionName() const { return func_name; }
 };
 
 // IfStatement class
@@ -710,6 +730,9 @@ public:
     // Getter methods for accessing private members
     Expression* getObject() const { return object; }
     const std::string& getMember() const { return member; }
+    
+    // Method to get field pointer for assignment (returns pointer, not loaded value)
+    llvm::Value* getFieldPointer(CodeGenerator& generator);
 };
 
 // SelfExpression class for 'self' keyword

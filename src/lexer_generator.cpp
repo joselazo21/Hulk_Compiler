@@ -265,7 +265,8 @@ public:
                 rule.pattern == "while" || rule.pattern == "for" || rule.pattern == "in" ||
                 rule.pattern == "type" || rule.pattern == "inherits" || rule.pattern == "new" ||
                 rule.pattern == "self" || rule.pattern == "base" || rule.pattern == "is" ||
-                rule.pattern == "as") {
+                rule.pattern == "as" || rule.pattern == "true" || rule.pattern == "false" ||
+                rule.pattern == "Boolean" || rule.pattern == "Number" || rule.pattern == "String") {
                 out << "    {\"" << rule.pattern << "\", " << rule.token_name << "},\n";
             }
         }

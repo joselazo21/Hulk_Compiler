@@ -112,100 +112,74 @@ bool NewExpression::Validate(IContext* context) {
         constructorOwnerTypeDef = typeDef; // Fallback to original type
     }
     
-    // Debug output to understand the inheritance chain
-    std::cout << "[DEBUG] Type: " << typeName << ", constructorOwnerTypeDef: " << (constructorOwnerTypeDef ? constructorOwnerTypeDef->getName() : "null") << std::endl;
-    std::cout << "[DEBUG] Constructor params: ";
+
+
+
     for (const auto& param : constructorParams) {
         std::cout << param << " ";
     }
     std::cout << std::endl;
     
     // Now validate argument types against the constructor parameter types
-    // We need to look at the fields of the type that defines the constructor
+    // We need to look at the constructor parameters and infer their expected types
     if (constructorOwnerTypeDef && !constructorParams.empty()) {
         const auto& constructorFields = constructorOwnerTypeDef->getFields();
         
-        std::cout << "[DEBUG] Fields in constructorOwnerTypeDef (" << constructorOwnerTypeDef->getName() << "): ";
+
         for (const auto& field : constructorFields) {
             std::cout << field.first << " ";
         }
         std::cout << std::endl;
         
         for (size_t i = 0; i < args.size() && i < constructorParams.size(); ++i) {
-            // Find the field that corresponds to this constructor parameter
-            std::string expectedType = "String"; // Default to String since most constructor params are names
-            bool foundField = false;
+            // Extract parameter name and type annotation from constructor parameter
+            std::string paramName = constructorParams[i];
+            std::string expectedType = ""; // Will be inferred
             
-            // Look for a field that matches the constructor parameter name
-            for (const auto& field : constructorFields) {
-                std::string fieldName = field.first;
-                
-                std::cout << "[DEBUG] Checking field: '" << fieldName << "' against param: '" << constructorParams[i] << "'" << std::endl;
-                
-                // Extract the actual field name (remove type annotation if present)
-                std::string actualFieldName = fieldName;
-                size_t colonPos = fieldName.find(':');
-                if (colonPos != std::string::npos) {
-                    actualFieldName = fieldName.substr(0, colonPos);
-                    // Remove any leading/trailing whitespace
-                    actualFieldName.erase(0, actualFieldName.find_first_not_of(" \t"));
-                    actualFieldName.erase(actualFieldName.find_last_not_of(" \t") + 1);
-                    
-                    // Extract type annotation from field name if present
-                    expectedType = fieldName.substr(colonPos + 1);
-                    // Remove any leading/trailing whitespace
-                    expectedType.erase(0, expectedType.find_first_not_of(" \t"));
-                    expectedType.erase(expectedType.find_last_not_of(" \t") + 1);
-                    foundField = true;
-                    
-                    std::cout << "[DEBUG] Field has type annotation - actualFieldName: '" << actualFieldName 
-                              << "', expectedType: '" << expectedType << "'" << std::endl;
-                }
-                
-                // Extract just the parameter name if it contains type annotation
-                std::string paramName = constructorParams[i];
-                size_t paramColonPos = paramName.find(':');
-                if (paramColonPos != std::string::npos) {
-                    paramName = paramName.substr(0, paramColonPos);
-                    // Remove any trailing whitespace
-                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
-                }
-                
-                // Check if this field corresponds to the constructor parameter
-                if (actualFieldName == paramName) {
-                    std::cout << "[DEBUG] Found matching field for param '" << paramName << "'" << std::endl;
-                    break;
-                }
+            size_t paramColonPos = paramName.find(':');
+            if (paramColonPos != std::string::npos) {
+                expectedType = paramName.substr(paramColonPos + 1);
+                paramName = paramName.substr(0, paramColonPos);
+                // Remove any leading/trailing whitespace
+                paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                expectedType.erase(0, expectedType.find_first_not_of(" \t"));
+                expectedType.erase(expectedType.find_last_not_of(" \t") + 1);
             }
             
-            // If we didn't find the field in the constructor owner type, 
-            // it might be because the parameter name doesn't match the field name exactly
-            // In this case, we should infer the type from the parameter name itself
-            if (!foundField) {
-                // Extract just the parameter name if it contains type annotation
-                std::string paramName = constructorParams[i];
-                size_t paramColonPos = paramName.find(':');
-                if (paramColonPos != std::string::npos) {
-                    paramName = paramName.substr(0, paramColonPos);
-                    // Remove any trailing whitespace
-                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+            // If no explicit type annotation, try to infer from field definitions
+            if (expectedType.empty()) {
+                // Look for a field that matches the constructor parameter name
+                for (const auto& field : constructorFields) {
+                    std::string fieldName = field.first;
+                    std::string fieldType = "";
+                    
+                    // Extract the actual field name and type (remove type annotation if present)
+                    size_t colonPos = fieldName.find(':');
+                    if (colonPos != std::string::npos) {
+                        fieldType = fieldName.substr(colonPos + 1);
+                        fieldName = fieldName.substr(0, colonPos);
+                        // Remove any leading/trailing whitespace
+                        fieldName.erase(0, fieldName.find_first_not_of(" \t"));
+                        fieldName.erase(fieldName.find_last_not_of(" \t") + 1);
+                        fieldType.erase(0, fieldType.find_first_not_of(" \t"));
+                        fieldType.erase(fieldType.find_last_not_of(" \t") + 1);
+                    }
+                    
+                    // Check if this field corresponds to the constructor parameter
+                    if (fieldName == paramName) {
+                        expectedType = fieldType.empty() ? "Number" : fieldType; // Default to Number if no type annotation
+                        break;
+                    }
                 }
                 
-                // For the first parameter named "name", it's typically String
-                if (paramName == "name") {
-                    expectedType = "String";
-                } else {
-                    // For other parameters, try to infer from context or keep default
-                    expectedType = "String"; // Most constructor params are strings
+                // If still no type found, default based on parameter name
+                if (expectedType.empty()) {
+                    expectedType = "Number"; // Default assumption
                 }
             }
-            
-            // Debug output to help diagnose the issue
-            std::cout << "[DEBUG] Constructor param " << i << " (" << constructorParams[i] 
-                      << ") expected type: " << expectedType << ", foundField: " << foundField << std::endl;
             
             // Infer the actual type of the argument
-            std::string actualType = "Number"; // Default
+            std::string actualType = "";
             
             // Check if argument is a string literal
             if (dynamic_cast<StringLiteral*>(args[i])) {
@@ -215,13 +189,58 @@ bool NewExpression::Validate(IContext* context) {
             else if (dynamic_cast<Number*>(args[i])) {
                 actualType = "Number";
             }
-            // For other expressions, we'd need more sophisticated type inference
-            // For now, we'll assume they're valid
+            // Check if argument is a boolean literal
+            else if (dynamic_cast<Boolean*>(args[i])) {
+                actualType = "Boolean";
+            }
+            // Check if argument is a new expression (user-defined type)
+            else if (auto* newExpr = dynamic_cast<NewExpression*>(args[i])) {
+                actualType = newExpr->getTypeName();
+            }
+            // Check if argument is a variable - try to get its type from context
+            else if (auto* var = dynamic_cast<Variable*>(args[i])) {
+                std::string varTypeName = context->getVariableTypeName(var->getName());
+                if (!varTypeName.empty()) {
+                    actualType = varTypeName;
+                } else {
+                    // If no type information available, assume it's compatible
+                    actualType = expectedType;
+                }
+            }
+            // For other expressions, try to infer or assume compatibility
+            else {
+                // For complex expressions, we'll assume they're compatible for now
+                // A more sophisticated type system would do full type inference here
+                actualType = expectedType;
+            }
             
-            std::cout << "[DEBUG] Constructor param " << i << " actual type: " << actualType << std::endl;
+
             
             // Check type compatibility
-            if (expectedType != actualType) {
+            // Allow exact matches or inheritance relationships
+            bool isCompatible = false;
+            
+            if (expectedType == actualType) {
+                isCompatible = true;
+            }
+            // Check if actualType is a subtype of expectedType
+            else if (context->hasType(actualType) && context->hasType(expectedType)) {
+                isCompatible = context->isSubtypeOf(actualType, expectedType);
+            }
+            // Special case: allow Number literals where Number is expected
+            else if (expectedType == "Number" && actualType == "Number") {
+                isCompatible = true;
+            }
+            // Special case: allow String literals where String is expected
+            else if (expectedType == "String" && actualType == "String") {
+                isCompatible = true;
+            }
+            // Special case: allow Boolean literals where Boolean is expected
+            else if (expectedType == "Boolean" && actualType == "Boolean") {
+                isCompatible = true;
+            }
+            
+            if (!isCompatible) {
                 SEMANTIC_ERROR("Constructor argument " + std::to_string(i + 1) + 
                               " for type '" + typeName + "' expects " + expectedType + 
                               " but got " + actualType, location);
@@ -293,7 +312,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     
     // Register the runtime struct type in the context
     globalContext->addType("runtime." + typeName, runtimeStructType);
-    std::cout << "[DEBUG] Registered runtime struct type: runtime." << typeName << std::endl;
+
     
     // Allocate memory for the runtime struct (not the original struct)
     llvm::DataLayout dataLayout(module);
@@ -411,20 +430,20 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     }
 
     // Assign parent fields using evaluated parent arguments
-    std::cout << "[DEBUG] Assigning " << parentFieldCount << " parent fields for type " << typeName << std::endl;
+
     for (int i = 0; i < parentFieldCount; ++i) {
         llvm::Value* value = nullptr;
         std::string fieldName = globalContext->getFieldName(typeName, i);
-        std::cout << "[DEBUG] Processing parent field " << i << " (fieldName=" << fieldName << ")" << std::endl;
+
         
         if (i < static_cast<int>(evaluatedParentArgs.size())) {
             value = evaluatedParentArgs[i];
-            std::cout << "[DEBUG] Using evaluated parent argument " << i << " for field " << fieldName << std::endl;
+
         } else if (i < static_cast<int>(args.size())) {
             // Fallback: use constructor argument if parentArgs not specified
             // Re-evaluate since we're in a new scope
             value = args[i]->codegen(generator);
-            std::cout << "[DEBUG] Using constructor argument " << i << " for parent field " << fieldName << std::endl;
+
         } else {
             // Try to get the field initialization expression by traversing the inheritance chain
             std::string currentType = parentType;
@@ -452,7 +471,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
                             Expression* fieldInitExpr = currentField.second;
                             if (fieldInitExpr) {
                                 value = fieldInitExpr->codegen(generator);
-                                std::cout << "[DEBUG] Using field initialization expression from type " << currentType << " for field " << fieldName << std::endl;
+
                                 foundField = true;
                                 break;
                             }
@@ -470,7 +489,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             }
             
             if (!foundField) {
-                std::cout << "[DEBUG] Field " << fieldName << " not found in inheritance chain starting from " << parentType << std::endl;
+
             }
             
             // If still no value, use default zero value
@@ -485,20 +504,37 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
                 } else {
                     value = llvm::Constant::getNullValue(fieldType);
                 }
-                std::cout << "[DEBUG] Using default value for parent field " << fieldName << std::endl;
+
             }
         }
         if (!value) {
-            std::cout << "[DEBUG] ERROR: Failed to get value for parent field " << fieldName << std::endl;
+
             generator.popScope();
             return nullptr;
         }
         
-        // Debug: print value type
+
         std::string valueTypeStr;
         llvm::raw_string_ostream rso(valueTypeStr);
         value->getType()->print(rso);
-        std::cout << "[DEBUG] Parent field " << fieldName << " value type: " << valueTypeStr << std::endl;
+
+        
+        // Get the expected field type
+        llvm::Type* expectedFieldType = runtimeStructType->getElementType(i + 1); // +1 for type ID field
+        
+        // Check if we need to cast the value to match the expected field type
+        if (value->getType() != expectedFieldType) {
+            // Handle pointer type mismatches (e.g., i8* vs specific struct pointer)
+            if (value->getType()->isPointerTy() && expectedFieldType->isPointerTy()) {
+                value = builder->CreateBitCast(value, expectedFieldType, "cast.field." + fieldName);
+            }
+            // Handle other type mismatches
+            else if (value->getType()->isPointerTy() && expectedFieldType->isFloatTy()) {
+                // This shouldn't happen in well-formed code, but handle gracefully
+                std::cerr << "Warning: Type mismatch for field " << fieldName << ", using default value" << std::endl;
+                value = llvm::ConstantFP::get(expectedFieldType, 0.0);
+            }
+        }
         
         llvm::Value* indices[2] = {
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
@@ -511,7 +547,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             "field." + fieldName
         );
         builder->CreateStore(value, fieldPtr);
-        std::cout << "[DEBUG] Stored value for parent field " << fieldName << std::endl;
+
     }
 
     // Assign own fields (after parent fields)
@@ -521,8 +557,8 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     int ownFieldStartIdx = parentFieldCount;
     int numOwnFields = totalFields - parentFieldCount;
     
-    std::cout << "[DEBUG] Assigning " << numOwnFields << " own fields for type " << typeName << std::endl;
-    std::cout << "[DEBUG] Constructor params: ";
+
+
     for (size_t i = 0; i < constructorParams.size(); ++i) {
         std::cout << constructorParams[i] << " ";
     }
@@ -533,7 +569,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
         int fieldIdx = ownFieldStartIdx + i;
         std::string fieldName = globalContext->getFieldName(typeName, fieldIdx);
         
-        std::cout << "[DEBUG] Processing field " << i << " (fieldIdx=" << fieldIdx << ", fieldName=" << fieldName << ")" << std::endl;
+
         
         // First priority: try to use constructor parameter if available
         if (i < static_cast<int>(constructorParams.size())) {
@@ -546,34 +582,34 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
                 paramName.erase(paramName.find_last_not_of(" \t") + 1);
             }
             
-            std::cout << "[DEBUG] Using constructor parameter " << paramName << " for field " << fieldName << std::endl;
+
             // Load from the alloca we created earlier
             llvm::Value* alloca = generator.getNamedValue(paramName);
             if (alloca && llvm::isa<llvm::AllocaInst>(alloca)) {
                 llvm::AllocaInst* allocaInst = llvm::cast<llvm::AllocaInst>(alloca);
                 value = builder->CreateLoad(allocaInst->getAllocatedType(), allocaInst, paramName);
-                std::cout << "[DEBUG] Successfully loaded constructor parameter value" << std::endl;
+
             } else {
-                std::cout << "[DEBUG] Failed to find alloca for constructor parameter " << paramName << std::endl;
+
             }
         }
         
         // Second priority: use field initialization expression if no constructor param
         if (!value && typeDef_local && i < static_cast<int>(typeDef_local->getFields().size())) {
-            std::cout << "[DEBUG] Trying field initialization expression for field " << i << std::endl;
+
             Expression* fieldInitExpr = typeDef_local->getFields()[i].second;
             if (fieldInitExpr) {
                 // Evaluate the field initialization expression
                 value = fieldInitExpr->codegen(generator);
-                std::cout << "[DEBUG] Field initialization expression evaluated" << std::endl;
+
             } else {
-                std::cout << "[DEBUG] No field initialization expression found" << std::endl;
+
             }
         }
         
         // Last resort: default value
         if (!value) {
-            std::cout << "[DEBUG] Using default value for field " << fieldName << std::endl;
+
             // Default to appropriate zero value based on field type
             llvm::Type* fieldType = runtimeStructType->getElementType(fieldIdx + 1); // +1 for type ID field
             if (fieldType->isFloatTy()) {
@@ -587,7 +623,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             }
         }
         
-        // Debug: print value type and expected field type
+
         std::string valueTypeStr;
         llvm::raw_string_ostream rso1(valueTypeStr);
         value->getType()->print(rso1);
@@ -597,7 +633,21 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
         llvm::Type* expectedFieldType = runtimeStructType->getElementType(fieldIdx + 1);
         expectedFieldType->print(rso2);
         
-        std::cout << "[DEBUG] Own field " << fieldName << " value type: " << valueTypeStr << ", expected: " << fieldTypeStr << std::endl;
+
+        
+        // Check if we need to cast the value to match the expected field type
+        if (value->getType() != expectedFieldType) {
+            // Handle pointer type mismatches (e.g., i8* vs specific struct pointer)
+            if (value->getType()->isPointerTy() && expectedFieldType->isPointerTy()) {
+                value = builder->CreateBitCast(value, expectedFieldType, "cast.field." + fieldName);
+            }
+            // Handle other type mismatches
+            else if (value->getType()->isPointerTy() && expectedFieldType->isFloatTy()) {
+                // This shouldn't happen in well-formed code, but handle gracefully
+                std::cerr << "Warning: Type mismatch for field " << fieldName << ", using default value" << std::endl;
+                value = llvm::ConstantFP::get(expectedFieldType, 0.0);
+            }
+        }
         
         llvm::Value* indices[2] = {
             llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0),
@@ -610,7 +660,7 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
             "field." + fieldName
         );
         builder->CreateStore(value, fieldPtr);
-        std::cout << "[DEBUG] Stored value for field " << fieldName << std::endl;
+
     }
 
     // Pop the temporary scope

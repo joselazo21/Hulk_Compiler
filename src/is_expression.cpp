@@ -45,13 +45,13 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
     // Generate code for the object expression
     llvm::Value* objectValue = object->codegen(generator);
     if (!objectValue) {
-        std::cout << "[DEBUG] IsExpression::codegen - objectValue is null!" << std::endl;
+
         return nullptr;
     }
     
     // Get the object's type
     llvm::Type* objectType = objectValue->getType();
-    std::cout << "[DEBUG] IsExpression::codegen - objectType: " << objectType << std::endl;
+
     
     // Check if this is a literal string (global string constant)
     bool isLiteralString = false;
@@ -83,7 +83,7 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
     } else if (objectType->isIntegerTy(32)) {
-        std::cout << "[DEBUG] IsExpression::codegen - Integer type detected" << std::endl;
+
         // For Integer type - check if target type is Number, Integer, or Object
         if (typeName == "Number" || typeName == "Integer" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
@@ -91,7 +91,7 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0); // false
         }
     } else if (isLiteralString) {
-        std::cout << "[DEBUG] IsExpression::codegen - Literal string type detected" << std::endl;
+
         // For String literals - check if target type is String or Object
         if (typeName == "String" || typeName == "Object") {
             return llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 1); // true
@@ -117,7 +117,7 @@ llvm::Value* IsExpression::codegen(CodeGenerator& generator) {
             module
         );
     } else {
-        std::cout << "[DEBUG] IsExpression::codegen - Runtime type check function already exists" << std::endl;
+
     }
     
     // Cast object to void* and create type name string

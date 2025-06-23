@@ -55,7 +55,7 @@ bool FunctionCall::Validate(IContext* context) {
     }
     
     // Create type registry and checker for strict type verification
-    TypeRegistry typeRegistry;
+    TypeRegistry typeRegistry(context);
     TypeChecker checker(typeRegistry);
     
     // Infer types of all arguments using the formal type system
@@ -65,8 +65,21 @@ bool FunctionCall::Validate(IContext* context) {
     for (size_t i = 0; i < args.size(); i++) {
         Expression* arg = args[i];
         
-        // Use the formal type inference system
-        const Type* argType = checker.inferType(arg, context);
+        // First try to get type directly from context for variables
+        const Type* argType = nullptr;
+        if (auto variable = dynamic_cast<Variable*>(arg)) {
+            std::string varName = variable->getName();
+            std::string typeName = context->getVariableTypeName(varName);
+            if (!typeName.empty()) {
+                argType = typeRegistry.getType(typeName);
+            }
+        }
+        
+        // If not found, use the formal type inference system
+        if (!argType) {
+            argType = checker.inferType(arg, context);
+        }
+        
         if (!argType) {
             SEMANTIC_ERROR("Cannot infer type for argument " + std::to_string(i) + 
                          " in call to function '" + func_name + "'", location);
@@ -75,7 +88,7 @@ bool FunctionCall::Validate(IContext* context) {
             argTypes.push_back(argType);
             argTypeNames.push_back(argType->toString());
             
-            std::cout << "[DEBUG] Argument " << i << " inferred type: " << argType->toString() << std::endl;
+
         }
     }
     
@@ -87,23 +100,53 @@ bool FunctionCall::Validate(IContext* context) {
             hasErrors = true;
         }
         if (!hasErrors) {
-            std::cout << "[DEBUG] Function print validated with " << args.size() << " arguments" << std::endl;
+
+        }
+        return !hasErrors;
+    }
+    
+    // Special handling for random function
+    if (func_name == "random") {
+        // Random accepts one argument (max value)
+        if (args.size() != 1) {
+            SEMANTIC_ERROR("random function expects exactly 1 argument", location);
+            hasErrors = true;
+        }
+        if (!hasErrors) {
+
+        }
+        return !hasErrors;
+    }
+    
+    // Special handling for rand function
+    if (func_name == "rand") {
+        // Rand accepts no arguments
+        if (args.size() != 0) {
+            SEMANTIC_ERROR("rand function expects no arguments", location);
+            hasErrors = true;
+        }
+        if (!hasErrors) {
+
         }
         return !hasErrors;
     }
     
     // Get function type information from context
+    std::cout << "[DEBUG] FunctionCall::Validate - Getting function type for '" << func_name << "'" << std::endl;
     const FunctionType* funcType = getFunctionType(func_name, context, typeRegistry);
     if (!funcType) {
+        std::cout << "[DEBUG] FunctionCall::Validate - No function type found for '" << func_name << "'" << std::endl;
         // For other built-in functions, create a temporary function type or allow them
         if (isBuiltinFunction(func_name)) {
-            std::cout << "[DEBUG] Function " << func_name << " is built-in, allowing call" << std::endl;
+
             return !hasErrors;
         }
         
         SEMANTIC_ERROR("Function '" + func_name + "' not found or has no type information", location);
         hasErrors = true;
         return !hasErrors;
+    } else {
+        std::cout << "[DEBUG] FunctionCall::Validate - Found function type for '" << func_name << "'" << std::endl;
     }
     
     // Verify argument count matches function signature
@@ -133,7 +176,7 @@ bool FunctionCall::Validate(IContext* context) {
     }
     
     if (!hasErrors) {
-        std::cout << "[DEBUG] Function call " << func_name << " type check passed" << std::endl;
+
     }
     return !hasErrors;
 }
@@ -274,18 +317,29 @@ llvm::Value* FunctionCall::codegen(CodeGenerator& generator) {
 
 // Helper function to get function type from context
 const FunctionType* FunctionCall::getFunctionType(const std::string& funcName, IContext* context, TypeRegistry& typeRegistry) {
+    std::cout << "[DEBUG] getFunctionType - Looking up function '" << funcName << "'" << std::endl;
+    
     // First try to get user-defined function information from context
     std::vector<std::string> paramTypeNames = context->getFunctionParamTypes(funcName);
     std::string returnTypeName = context->getFunctionReturnType(funcName);
+    
+    std::cout << "[DEBUG] getFunctionType - Found param types: [";
+    for (size_t i = 0; i < paramTypeNames.size(); i++) {
+        if (i > 0) std::cout << ", ";
+        std::cout << paramTypeNames[i];
+    }
+    std::cout << "] -> " << returnTypeName << std::endl;
     
     if (!paramTypeNames.empty() || !returnTypeName.empty()) {
         // Convert string type names to Type objects
         std::vector<std::unique_ptr<Type>> paramTypes;
         
         for (const std::string& typeName : paramTypeNames) {
+            std::cout << "[DEBUG] getFunctionType - Converting type name '" << typeName << "'" << std::endl;
             const Type* type = typeRegistry.getType(typeName);
             if (type) {
-                // Create a copy of the type (simplified - in real implementation, use proper cloning)
+                std::cout << "[DEBUG] getFunctionType - Found type in registry for '" << typeName << "'" << std::endl;
+                // Create a copy of the type based on what we found
                 if (typeName == "Number") {
                     paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER));
                 } else if (typeName == "String") {
@@ -295,12 +349,26 @@ const FunctionType* FunctionCall::getFunctionType(const std::string& funcName, I
                 } else if (typeName == "Void") {
                     paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::VOID));
                 } else {
-                    // Default to Number for unknown types
-                    paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER));
+                    std::cout << "[DEBUG] getFunctionType - Creating user-defined type for '" << typeName << "'" << std::endl;
+                    // Create a user-defined type for custom types
+                    paramTypes.push_back(std::make_unique<UserDefinedType>(typeName));
                 }
             } else {
-                // Default to Number if type not found
-                paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER));
+                std::cout << "[DEBUG] getFunctionType - Type not found in registry for '" << typeName << "'" << std::endl;
+                // For types not in registry, create appropriate type objects
+                if (typeName == "Number") {
+                    paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER));
+                } else if (typeName == "String") {
+                    paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::STRING));
+                } else if (typeName == "Boolean") {
+                    paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::BOOLEAN));
+                } else if (typeName == "Void") {
+                    paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::VOID));
+                } else {
+                    std::cout << "[DEBUG] getFunctionType - Creating user-defined type for unregistered '" << typeName << "'" << std::endl;
+                    // Create a user-defined type for custom types even if not registered
+                    paramTypes.push_back(std::make_unique<UserDefinedType>(typeName));
+                }
             }
         }
         
@@ -314,8 +382,11 @@ const FunctionType* FunctionCall::getFunctionType(const std::string& funcName, I
             returnType = std::make_unique<BuiltinTypeImpl>(BuiltinType::BOOLEAN);
         } else if (returnTypeName == "Void") {
             returnType = std::make_unique<BuiltinTypeImpl>(BuiltinType::VOID);
+        } else if (!returnTypeName.empty()) {
+            // Create a user-defined type for custom return types
+            returnType = std::make_unique<UserDefinedType>(returnTypeName);
         } else {
-            // Default to Number
+            // Default to Number if no return type specified
             returnType = std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER);
         }
         
@@ -358,13 +429,21 @@ const FunctionType* FunctionCall::getFunctionType(const std::string& funcName, I
         return new FunctionType(std::move(paramTypes), std::move(returnType));
     }
     
+    // Random function - one parameter (max value), returns Number
+    if (funcName == "random") {
+        std::vector<std::unique_ptr<Type>> paramTypes;
+        paramTypes.push_back(std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER));
+        auto returnType = std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER);
+        return new FunctionType(std::move(paramTypes), std::move(returnType));
+    }
+    
     return nullptr;
 }
 
 // Helper function to check if a function is built-in
 bool FunctionCall::isBuiltinFunction(const std::string& funcName) {
     static const std::set<std::string> builtins = {
-        "print", "sqrt", "sin", "cos", "range", "rand"
+        "print", "sqrt", "sin", "cos", "range", "rand", "random"
     };
     return builtins.find(funcName) != builtins.end();
 }

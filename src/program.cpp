@@ -93,8 +93,16 @@ bool Program::Validate(IContext* context) {
     }
     
     // Sixth pass: register all functions first (before validating their bodies or statements)
+    std::cout << "[DEBUG] Program::Validate - Registering " << functions.size() << " functions from functions vector" << std::endl;
     for (auto* f : functions) {
         // Register function signature without validating body yet
+        std::cout << "[DEBUG] Registering function '" << f->getName() << "' with params: [";
+        for (size_t i = 0; i < f->getParamTypes().size(); i++) {
+            if (i > 0) std::cout << ", ";
+            std::cout << f->getParams()[i] << ":" << f->getParamTypes()[i];
+        }
+        std::cout << "] -> " << f->getReturnType() << std::endl;
+        
         if (!context->addFunction(f->getName(), f->getParams(), f->getParamTypes(), f->getReturnType())) {
             SEMANTIC_ERROR("Function '" + f->getName() + "' already defined", f->getLocation());
             hasErrors = true;
@@ -102,8 +110,16 @@ bool Program::Validate(IContext* context) {
     }
     
     // Also register functions that might be in statements
+    std::cout << "[DEBUG] Program::Validate - Checking " << statements.size() << " statements for function declarations" << std::endl;
     for (auto* s : statements) {
         if (auto* func_decl = dynamic_cast<FunctionDeclaration*>(s)) {
+            std::cout << "[DEBUG] Found function declaration in statements: '" << func_decl->getName() << "' with params: [";
+            for (size_t i = 0; i < func_decl->getParamTypes().size(); i++) {
+                if (i > 0) std::cout << ", ";
+                std::cout << func_decl->getParams()[i] << ":" << func_decl->getParamTypes()[i];
+            }
+            std::cout << "] -> " << func_decl->getReturnType() << std::endl;
+            
             if (!context->addFunction(func_decl->getName(), func_decl->getParams(), func_decl->getParamTypes(), func_decl->getReturnType())) {
                 SEMANTIC_ERROR("Function '" + func_decl->getName() + "' already defined", func_decl->getLocation());
                 hasErrors = true;
@@ -172,7 +188,7 @@ void Program::generateDeclarations(CodeGenerator& cg) {
     for (auto* t : types) {
         std::string structName = "struct." + t->getName();
         llvm::StructType* structType = llvm::StructType::create(context, structName);
-        std::cout << "DEBUG: Registering type '" << t->getName() << "' with struct " << structType << " in context " << currentContext << std::endl;
+
         currentContext->addType(t->getName(), structType);
         
         // Set parent type relationship

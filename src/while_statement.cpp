@@ -91,13 +91,24 @@ llvm::Value* WhileStatement::codegen(CodeGenerator& generator) {
         }
     }
 
-    // Solo añade br condBB si el bloque no fue terminado por el body
-    if (!currentBodyBB->getTerminator()) {
-        std::cout << "Inserto terminator";
+    // Only add a branch back to the condition if the current block is not already terminated.
+    // This is crucial because the body of the loop might contain its own control flow,
+    // such as a return or break statement, which would already terminate the block.
+    if (generator.getBuilder()->GetInsertBlock()->getTerminator() == nullptr) {
         generator.getBuilder()->CreateBr(condBB);
     }
 
     generator.getBuilder()->SetInsertPoint(endBB);
-    // Eliminado: return automático en while/endBB (sea o no main)
-    return nullptr;
+    
+    // The end block should not have a terminator - it should fall through
+    // to whatever comes next in the calling code
+    if (resultPtr) {
+        // If we have a result from the loop body, load and return it
+        llvm::Value* result = generator.getBuilder()->CreateLoad(
+            resultPtr->getType()->getPointerElementType(), resultPtr, "while.final.result");
+        return result;
+    }
+    
+    // Return a default value - the calling code will handle adding terminators
+    return llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
 }

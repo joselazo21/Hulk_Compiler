@@ -65,7 +65,7 @@ bool AssignmentExpression::Validate(IContext* context) {
     }
     
     if (exprType) {
-        std::cout << "[DEBUG] AssignmentExpression::Validate - Expression type: " << exprType->toString() << std::endl;
+
     }
     
     if (memberAccess) {
@@ -80,7 +80,7 @@ bool AssignmentExpression::Validate(IContext* context) {
             SEMANTIC_ERROR("Cannot determine type of member in assignment", location);
             hasErrors = true;
         } else {
-            std::cout << "[DEBUG] AssignmentExpression::Validate - Member type: " << memberType->toString() << std::endl;
+
             
             if (exprType && !checker.areTypesCompatible(memberType, exprType)) {
                 SEMANTIC_ERROR("Type mismatch in member assignment: expected " + 
@@ -90,7 +90,7 @@ bool AssignmentExpression::Validate(IContext* context) {
         }
         
         if (!hasErrors) {
-            std::cout << "[DEBUG] Member assignment type check passed" << std::endl;
+
         }
     } else {
         // Verify type of variable
@@ -98,14 +98,14 @@ bool AssignmentExpression::Validate(IContext* context) {
         if (!varLLVMType) {
             // Variable doesn't exist yet - this might be a new variable declaration
             // In this case, we allow the assignment and the variable will take the type of the expression
-            std::cout << "[DEBUG] Variable '" << id << "' not found in context, allowing assignment (new variable)" << std::endl;
+
         } else {
             const Type* expectedType = llvmTypeToOurType(varLLVMType, typeRegistry);
             if (!expectedType) {
                 SEMANTIC_ERROR("Cannot convert LLVM type to our type system for variable '" + id + "'", location);
                 hasErrors = true;
             } else {
-                std::cout << "[DEBUG] AssignmentExpression::Validate - Variable '" << id << "' expected type: " << expectedType->toString() << std::endl;
+
                 
                 if (exprType && !checker.areTypesCompatible(expectedType, exprType)) {
                     SEMANTIC_ERROR("Type mismatch in variable assignment: variable '" + id + 
@@ -116,7 +116,7 @@ bool AssignmentExpression::Validate(IContext* context) {
         }
         
         if (!hasErrors) {
-            std::cout << "[DEBUG] Variable assignment type check passed" << std::endl;
+
         }
     }
     
@@ -137,7 +137,7 @@ llvm::Value* AssignmentExpression::codegen(CodeGenerator& generator) {
 
     if (memberAccess) {
         // Handle member access assignment
-        llvm::Value* memberPtr = memberAccess->codegen(generator);
+        llvm::Value* memberPtr = memberAccess->getFieldPointer(generator);
         if (!memberPtr) {
             SEMANTIC_ERROR("Failed to generate code for member access", getLocation());
             return nullptr;
@@ -149,6 +149,9 @@ llvm::Value* AssignmentExpression::codegen(CodeGenerator& generator) {
             // Try to cast if needed
             if (memberType->isIntegerTy() && val->getType()->isIntegerTy()) {
                 val = generator.getBuilder()->CreateIntCast(val, memberType, true);
+            } else if (memberType->isFloatTy() && val->getType()->isFloatTy()) {
+                // Both are float types, should be compatible
+                // No casting needed
             } else {
                 SEMANTIC_ERROR("Type mismatch in member assignment", getLocation());
                 return nullptr;
@@ -157,6 +160,9 @@ llvm::Value* AssignmentExpression::codegen(CodeGenerator& generator) {
         
         // Store the value to the member
         generator.getBuilder()->CreateStore(val, memberPtr);
+        
+        // For member assignments, return the assigned value (not the pointer)
+        // This is important for setter methods that should return the assigned value
         return val;
     } else {
         // Handle regular variable assignment
@@ -192,22 +198,62 @@ llvm::Value* AssignmentExpression::codegen(CodeGenerator& generator) {
 
 // Helper function to infer the type of a member access
 const Type* AssignmentExpression::inferMemberType(MemberAccess* memberAccess, IContext* context, TypeRegistry& typeRegistry) {
-    // This is a simplified implementation
-    // In a full system, you would need to:
-    // 1. Get the type of the object being accessed
-    // 2. Look up the field type in that object's type definition
+
     
-    // For now, we'll return a default type based on common patterns
-    // This should be replaced with proper member type lookup
+    // Get the object being accessed (e.g., 'self' in 'self.data')
+    Expression* object = memberAccess->getObject();
+    std::string memberName = memberAccess->getMember();
     
-    std::cout << "[DEBUG] inferMemberType called for member access" << std::endl;
+    // Check if it's a self reference
+    if (auto selfExpr = dynamic_cast<SelfExpression*>(object)) {
+        // Get the current type being processed
+        std::string currentTypeName = context->getCurrentType();
+        if (!currentTypeName.empty()) {
+
+            
+            // Get the type definition
+            TypeDefinition* typeDef = context->getTypeDefinition(currentTypeName);
+            if (typeDef) {
+
+                
+                // Look through the fields to find the member
+                const auto& fields = typeDef->getFields();
+                for (const auto& field : fields) {
+                    std::string fieldName = field.first;
+                    
+                    // Extract the actual field name and type from the stored format
+                    std::string actualFieldName = fieldName;
+                    std::string fieldTypeName = "Number"; // Default
+                    
+                    size_t colonPos = fieldName.find(':');
+                    if (colonPos != std::string::npos) {
+                        actualFieldName = fieldName.substr(0, colonPos);
+                        fieldTypeName = fieldName.substr(colonPos + 1);
+                        // Remove any leading/trailing whitespace
+                        fieldTypeName.erase(0, fieldTypeName.find_first_not_of(" \t"));
+                        fieldTypeName.erase(fieldTypeName.find_last_not_of(" \t") + 1);
+                    }
+                
+                    if (actualFieldName == memberName) {
+
+                        
+                        // Return the appropriate type based on the field type annotation
+                        if (fieldTypeName == "String") {
+                            return typeRegistry.getStringType();
+                        } else if (fieldTypeName == "Boolean") {
+                            return typeRegistry.getBooleanType();
+                        } else {
+                            return typeRegistry.getNumberType();
+                        }
+                    }
+                }
+            }
+        }
+    }
     
-    // Try to infer the object type first
-    TypeChecker checker(typeRegistry);
-    // Note: memberAccess->getObject() would need to be implemented in MemberAccess class
-    // For now, we'll assume Number type for simplicity
-    
-    return typeRegistry.getNumberType(); // Default assumption
+    // If we can't determine the type, fall back to Number
+
+    return typeRegistry.getNumberType();
 }
 
 // Helper function to convert LLVM type to our type system

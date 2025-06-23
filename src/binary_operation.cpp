@@ -58,11 +58,6 @@ bool BinaryOperation::Validate(IContext* context) {
     if (!leftType || !rightType) {
         return !hasErrors;
     }
-    
-    std::cout << "[DEBUG] BinaryOperation::Validate - Left type: " << leftType->toString() 
-              << ", Right type: " << rightType->toString() 
-              << ", Operation: " << operation << std::endl;
-    
     // Verify type compatibility based on operation type
     
     // Arithmetic operations: +, -, *, /, ^, %
@@ -86,7 +81,7 @@ bool BinaryOperation::Validate(IContext* context) {
         }
         
         if (!hasErrors) {
-            std::cout << "[DEBUG] Arithmetic operation " << operation << " type check passed" << std::endl;
+
         }
         return !hasErrors;
     }
@@ -115,7 +110,7 @@ bool BinaryOperation::Validate(IContext* context) {
         }
         
         if (!hasErrors) {
-            std::cout << "[DEBUG] Concatenation operation " << operation << " type check passed" << std::endl;
+
         }
         return !hasErrors;
     }
@@ -147,7 +142,7 @@ bool BinaryOperation::Validate(IContext* context) {
         }
         
         if (!hasErrors) {
-            std::cout << "[DEBUG] Comparison operation " << operation << " type check passed" << std::endl;
+
         }
         return !hasErrors;
     }
@@ -178,7 +173,7 @@ bool BinaryOperation::Validate(IContext* context) {
         }
         
         if (!hasErrors) {
-            std::cout << "[DEBUG] Logical operation " << operation << " type check passed" << std::endl;
+
         }
         return !hasErrors;
     }

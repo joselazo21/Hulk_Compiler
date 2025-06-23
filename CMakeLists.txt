@@ -72,6 +72,7 @@ set(CUSTOM_LEXER_BISON_SOURCES
     src/let_in.cpp
     src/node.cpp
     src/number.cpp
+    src/boolean.cpp
     src/program.cpp
     src/statement.cpp
     src/string_literal.cpp

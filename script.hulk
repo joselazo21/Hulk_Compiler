@@ -1,258 +1,144 @@
-type Animal(name: String) {
-    name: String = name;
-    energy: Number = 100;
+type Stack {
+    data: String = "";
+    size: Number = 0;
+    capacity: Number = 10;
     
-    speak() : String => "Some generic animal sound";
-    move() : String => self.name @@ " moves slowly";
-    eat() : Number => {
-        self.energy := self.energy + 10;
-        print(self.name @@ " ate something. Energy: " @ self.energy);
-        self.energy;
-    };
-    status() : String => self.name @@ " has " @ self.energy @@ " energy";
-}
-
-type Mammal inherits Animal {
-    fur_color: String = "brown";
-    
-    speak() : String => "Mammal sound";
-    give_birth() : String => self.name @@ " gave birth to offspring";
-    regulate_temperature() : String => "Body temperature regulated";
-}
-
-type Dog inherits Mammal {
-    breed: String = "mixed";
-    
-    speak() : String => "Woof! " @@ base();
-    move() : String => self.name @@ " runs quickly on four legs";
-    fetch() : String => self.name @@ " fetches the ball";
-}
-
-type Cat inherits Mammal {
-    lives: Number = 9;
-    
-    speak() : String => "Meow! " @@ base();
-    move() : String => self.name @@ " prowls silently";
-    climb() : String => self.name @@ " climbs the tree";
-    lose_life() : Number => {
-        self.lives := self.lives - 1;
-        print(self.name @@ " lost a life. Lives remaining: " @ self.lives);
-        self.lives;
-    };
-}
-
-let dog = new Dog("Buddy") in
-let cat = new Cat("Whiskers") in
-let generic_mammal = new Mammal("Unknown") in {
-    print("=== Dog Tests ===");
-    print(dog.speak());
-    print(dog.move());
-    print(dog.fetch());
-    dog.eat();
-    print(dog.status());
-    
-    print("\n=== Cat Tests ===");
-    print(cat.speak());
-    print(cat.move());
-    print(cat.climb());
-    cat.lose_life();
-    cat.eat();
-    print(cat.status());
-};
-
-function fibonacci_advanced(n: Number, memo: String) : Number =>
-    if (n <= 1) {
-        print("Base case reached: " @ memo);
-        n;
-    } else {
-        print("Computing fib(" @ n @ ") - " @ memo);
-        fibonacci_advanced(n-1, memo @ "->left") + fibonacci_advanced(n-2, memo @ "->right");
-    };
-
-let result = fibonacci_advanced(8, "start") in print("Final result: " @ result);
-
-function apply_operation(x: Number, y: Number, op: Number) : Number =>
-    if (op == 1) x + y
-    elif (op == 2) x - y
-    elif (op == 3) x * y
-    elif (op == 4) x / y
-    else 0;
-
-function batch_operations(a: Number, b: Number) : Number {
-    let sum_result = apply_operation(a, b, 1) in
-    let diff_result = apply_operation(a, b, 2) in
-    let mult_result = apply_operation(a, b, 3) in
-    let div_result = apply_operation(a, b, 4) in {
-        print("Sum: " @ sum_result);
-        print("Difference: " @ diff_result);
-        print("Product: " @ mult_result);
-        print("Division: " @ div_result);
-        sum_result + diff_result + mult_result + div_result;
-    };
-}
-
-batch_operations(15.5, 3.2);
-
-function is_even(n: Number) : Number =>
-    if (n == 0) 1
-    elif (n == 1) 0
-    else is_odd(n - 1);
-
-function is_odd(n: Number) : Number =>
-    if (n == 0) 0
-    elif (n == 1) 1
-    else is_even(n - 1);
-
-for (i in range(0, 10)) {
-    print("Number " @ i @ " is even: " @ is_even(i));
-    print("Number " @ i @ " is odd: " @ is_odd(i));
-};
-
-function power(bases: Number, exp: Number) : Number =>
-    if (exp == 0) 1
-    elif (exp == 1) bases
-    else bases * power(bases, exp - 1);
-
-function sum_of_powers(n: Number) : Number =>
-    if (n <= 0) 0
-    else power(n, 2) + sum_of_powers(n - 1);
-
-let powers_sum = sum_of_powers(5) in {
-    print("Sum of squares from 1 to 5: " @ powers_sum);
-    let factorial_5 : Number = fact(5) in
-    print("Factorial 5: " @ factorial_5);
-};
-
-function fact(n: Number) : Number =>
-    if (n <= 1) 1
-    else n * fact(n - 1);
-
-
-function complex_calculator(x: Number, y: Number, z: Number) : Number {
-    let temp1 : Number = if (x > y) x else y in
-    let temp2 : Number = if (temp1 > z) temp1 else z in
-    let result: Number = 0 in {
-        if (temp2 % 2 == 0) {
-            result := temp2 * 2;
-            print("Even max, doubled: " @ result);
+    push(item: String) : Number => {
+        if (self.size >= self.capacity) {
+            print("Stack overflow! Cannot push: " @ item);
+            0;
         } else {
-            result := temp2 * 3 + 1;
-            print("Odd max, 3n+1: " @ result);
-        };
-        
-        for (i in range(1, 4)) {
-            print("After adding " @ i @ "^2: " @ result);
-            result := result + power(i, 2);
-            
+            self.data := self.data @@ item @@ "|";
+            self.size := self.size + 1;
+            print("Pushed: " @ item @ " (size: " @ self.size @ ")");
+            1;
         };
     };
-}
-
-type Flyable {
-    altitude: Number = 0;
-    fly() : String => "Flying at altitude " @ self.altitude;
-    land() : String => {
-        self.altitude := 0;
-        "Landed safely";
-    };
-}
-
-type Swimmable {
-    depth: Number = 0;
-    swim() : String => "Swimming at depth " @ self.depth;
-    surface() : String => {
-        self.depth := 0;
-        "Surfaced";
-    };
-}
-
-type Bird inherits Animal {
-    wing_span: Number = 50;
     
-    speak() : String => "Tweet tweet!";
-    fly() : String => {
-        print(self.name @@ " spreads wings and takes flight");
-        "Flying with wingspan " @ self.wing_span;
-    };
-}
-
-type Fish inherits Animal {
-    fin_count: Number = 4;
-    
-    speak() : String => "Blub blub";
-    swim() : String => {
-        print(self.name @@ " swims gracefully");
-        "Swimming with " @ self.fin_count @@ " fins";
-    };
-}
-
-type Vehicle(brand: String , model: String) {
-    brand: String = brand;
-    model: String = model;
-    speed: Number = 0;
-    
-    start() : String => self.brand @@ " " @@ self.model @@ " started";
-    accelerate(amount: Number) : Number => {
-        self.speed := self.speed + amount;
-        print("Speed increased to: " @ self.speed);
-        self.speed;
-    };
-    info() : String => self.brand @@ " " @@ self.model @@ " going " @ self.speed @@ " mph";
-}
-
-type Car inherits Vehicle {
-    doors: Number = 4;
-    
-    honk() : String => "Beep beep!";
-    park() : String => {
-        self.speed := 0;
-        self.brand @@ " " @@ self.model @@ " parked";
-    };
-}
-
-type Motorcycle inherits Vehicle {
-    has_sidecar: Number = 0;
-    
-    wheelie() : String => 
-        if (self.speed > 20) self.brand @@ " does a wheelie!"
-        else "Too slow for wheelie";
-}
-
-let vehicles_test = {
-    let car : Car = new Car("Toyota", "Camry") in
-    let bike : Motorcycle = new Motorcycle("Harley", "Davidson") in
-    let generic_vehicle : Vehicle = new Vehicle("Generic", "Brand") in {
-        
-        print("=== Type Checking Tests ===");
-        print("Car is Vehicle: " @ (if (car is Vehicle) "true" else "false"));
-        print("Car is Car: " @ (if (car is Car) "true" else "false"));
-        print("Car is Motorcycle: " @ (if (car is Motorcycle) "true" else "false"));
-        
-        print("Bike is Vehicle: " @ (if (bike is Vehicle) "true" else "false"));
-        print("Bike is Motorcycle: " @ (if (bike is Motorcycle) "true" else "false"));
-        print("Bike is Car: " @ (if (bike is Car) "true" else "false"));
-        
-        let current_vehicle : Vehicle = if (1 == 1) car else bike in {
-            print("Selected vehicle info: " @ current_vehicle.info());
-            current_vehicle.accelerate(30);
-            print("After acceleration: " @ current_vehicle.info());
+    pop() : String => {
+        if (self.size <= 0) {
+            print("Stack underflow! Cannot pop from empty stack");
+            "";
+        } else {
+            let last_pipe : Number  = self.find_last_pipe() in
+            let item : String = self.extract_last_item() in {
+                self.size := self.size - 1;
+                print("Popped: " @ item @ " (size: " @ self.size @ ")");
+                item;
+            };
         };
-        
-        print("\nProcessing vehicles one by one:");
-        
-        print("\nVehicle 0:");
-        print(car.start());
-        car.accelerate(25);
-        print("This is a car, honking: " @ car.honk());
-        
-        print("\nVehicle 1:");
-        print(bike.start());
-        bike.accelerate(25);
-        print("This is a motorcycle, attempting wheelie: " @ bike.wheelie());
-        
-        print("\nVehicle 2:");
-        print(generic_vehicle.start());
-        generic_vehicle.accelerate(25);
-        print("This is a generic vehicle");
     };
-} in vehicles_test;
+    
+    find_last_pipe() : Number => self.size - 1;
+    
+    extract_last_item() : String => "item" @ self.size;
+    
+    peek() : String => {
+        if (self.size <= 0) {
+            print("Stack is empty");
+            "";
+        } else {
+            let item : String = self.extract_last_item() in {
+                print("Top item: " @ item);
+                item;
+            };
+        };
+    };
+    
+    is_empty() : Number => 
+        if (self.size == 0) 1 else 0;
+    
+    display() : String => {
+        print("Stack contents (size " @ self.size @ "): " @ self.data);
+        self.data;
+    };
+}
+
+let stack : Stack = new Stack() in {
+    print("=== Stack Operations Test ===");
+    stack.display();
+    
+    stack.push("first");
+    stack.push("second");
+    stack.push("third");
+    stack.display();
+    
+    stack.peek();
+
+    stack.pop();
+    stack.pop();
+    stack.display();
+    
+    stack.pop();
+    stack.pop(); 
+    
+    print("Is empty: " @ stack.is_empty());
+};
+
+
+type Queue {
+    items: String = "";
+    front_index: Number = 0;
+    rear_index: Number = 0;
+    count: Number = 0;
+    max_size: Number = 8;
+    
+    enqueue(item: String) : Number => {
+        if (self.count >= self.max_size) {
+            print("Queue is full! Cannot enqueue: " @ item);
+            0;
+        } else {
+            self.items := self.items @@ item @@ "|";
+            self.rear_index := self.rear_index + 1;
+            self.count := self.count + 1;
+            print("Enqueued: " @ item @ " (count: " @ self.count @ ")");
+            1;
+        };
+    };
+    
+    dequeue() : String => {
+        if (self.count <= 0) {
+            print("Queue is empty! Cannot dequeue");
+            "";
+        } else {
+            let item = "item" @ (self.front_index + 1) in {
+                self.front_index := self.front_index + 1;
+                self.count := self.count - 1;
+                print("Dequeued: " @ item @ " (count: " @ self.count @ ")");
+                item;
+            };
+        };
+    };
+    
+    size() : Number => self.count;
+    
+    is_full() : Number => 
+        if (self.count >= self.max_size) 1 else 0;
+    
+    display() : String => {
+        print("Queue state - Count: " @ self.count @ ", Front: " @ self.front_index @ ", Rear: " @ self.rear_index);
+        print("Items: " @ self.items);
+        self.items;
+    };
+}
+
+let queue = new Queue() in {
+    print("\n=== Queue Operations Test ===");
+    queue.display();
+    
+    for (i in range(1, 6)) {
+        queue.enqueue("task" @ i);
+    };
+    queue.display();
+    
+    queue.dequeue();
+    queue.dequeue();
+    queue.display();
+    
+    queue.enqueue("task6");
+    queue.enqueue("task7");
+    queue.display();
+    
+    queue.enqueue("task8");
+    queue.enqueue("task9");
+};

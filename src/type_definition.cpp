@@ -316,12 +316,13 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
         }
     }
     
-    // Generate methods
+    // FIRST PASS: Create all method signatures and register them in the context
+    std::vector<llvm::Function*> methodFunctions;
+    
     for (const auto& methodData : methodsData) {
         const std::string& methodName_local = std::get<0>(methodData);
         const std::vector<std::string>& params = std::get<1>(methodData);
         const std::string& returnTypeAnnotation = std::get<2>(methodData);
-        Expression* body = std::get<3>(methodData);
         
         std::string methodName = name + "." + methodName_local;
         
@@ -329,27 +330,62 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
         std::vector<llvm::Type*> paramTypes;
         paramTypes.push_back(structType->getPointerTo()); // 'self' parameter
         
-        // Add other parameters (all float for Number type)
+        // Add other parameters based on their type annotations
         for (size_t i = 0; i < params.size(); i++) {
-            paramTypes.push_back(llvm::Type::getFloatTy(context));
+            std::string param = params[i];
+            std::string paramTypeName = "Number"; // Default type
+            
+            // Check if parameter contains type annotation (e.g., "item:String")
+            size_t colonPos = param.find(':');
+            if (colonPos != std::string::npos) {
+                paramTypeName = param.substr(colonPos + 1);
+                // Remove any leading/trailing whitespace
+                paramTypeName.erase(0, paramTypeName.find_first_not_of(" \t"));
+                paramTypeName.erase(paramTypeName.find_last_not_of(" \t") + 1);
+            }
+            
+            // Determine parameter type based on annotation
+            llvm::Type* paramType;
+            if (paramTypeName == "String") {
+                paramType = llvm::Type::getInt8PtrTy(context);
+            } else if (paramTypeName == "Boolean") {
+                paramType = llvm::Type::getInt1Ty(context);
+            } else if (paramTypeName == "Number") {
+                paramType = llvm::Type::getFloatTy(context);
+            } else if (currentContext->hasType(paramTypeName)) {
+                // Parameter is a user-defined type - use i8* for runtime objects
+                paramType = llvm::Type::getInt8PtrTy(context);
+            } else {
+                paramType = llvm::Type::getFloatTy(context); // Number type (default)
+            }
+            
+            paramTypes.push_back(paramType);
         }
         
         // Determine return type from annotation
-        std::cout << "[DEBUG] Method " << methodName_local << " return type annotation: '" << returnTypeAnnotation << "'" << std::endl;
+
         llvm::Type* returnType;
         if (returnTypeAnnotation == "String") {
             returnType = llvm::Type::getInt8PtrTy(context);
-            std::cout << "[DEBUG] Set return type to i8* for String method" << std::endl;
+
         } else if (returnTypeAnnotation == "Number") {
             returnType = llvm::Type::getFloatTy(context);
-            std::cout << "[DEBUG] Set return type to float for Number method" << std::endl;
+
         } else if (returnTypeAnnotation == "Boolean") {
             returnType = llvm::Type::getInt1Ty(context);
-            std::cout << "[DEBUG] Set return type to i1 for Boolean method" << std::endl;
+
+        } else if (returnTypeAnnotation == name) {
+            // Method returns the same type as the class - use i8* for runtime objects
+            returnType = llvm::Type::getInt8PtrTy(context);
+
+        } else if (currentContext->hasType(returnTypeAnnotation)) {
+            // Method returns a user-defined type - use i8* for runtime objects
+            returnType = llvm::Type::getInt8PtrTy(context);
+
         } else {
             // Default to Number for unknown types
             returnType = llvm::Type::getFloatTy(context);
-            std::cout << "[DEBUG] Defaulted return type to float for unknown type: '" << returnTypeAnnotation << "'" << std::endl;
+
         }
         
         llvm::FunctionType* funcType = llvm::FunctionType::get(
@@ -384,6 +420,23 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
             argIt->setName(paramName);
         }
         
+        // Store the method in the context BEFORE generating method bodies
+        currentContext->addMethod(name, methodName_local, func);
+        
+        // Store the function for the second pass
+        methodFunctions.push_back(func);
+    }
+    
+    // SECOND PASS: Generate method bodies now that all signatures are registered
+    for (size_t methodIndex = 0; methodIndex < methodsData.size(); methodIndex++) {
+        const auto& methodData = methodsData[methodIndex];
+        const std::string& methodName_local = std::get<0>(methodData);
+        const std::vector<std::string>& params = std::get<1>(methodData);
+        const std::string& returnTypeAnnotation = std::get<2>(methodData);
+        Expression* body = std::get<3>(methodData);
+        
+        llvm::Function* func = methodFunctions[methodIndex];
+        
         // Create a basic block for the function
         llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "entry", func);
         generator.getBuilder()->SetInsertPoint(bb);
@@ -395,36 +448,57 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
         generator.setCurrentMethod(name, methodName_local);
         
         // Add parameters to the scope
-        argIt = func->arg_begin();
+        auto argIt = func->arg_begin();
         llvm::Value* selfValue = &*argIt; // Get 'self' value
         generator.setNamedValue("self", selfValue); // Add 'self' to the scope
+        
+        // Store the semantic type information for 'self'
+        generator.getContextObject()->setVariableTypeName("self", name);
+        std::cout << "[DEBUG] TypeDefinition::codegen - Set 'self' type to '" << name << "' for method " << methodName_local << std::endl;
         
         // Add method parameters to the scope
         for (size_t i = 0; i < params.size(); i++) {
             ++argIt;
             
-            // Extract just the parameter name if it contains type annotation
-            std::string paramName = params[i];
-            size_t colonPos = paramName.find(':');
+            // Extract parameter name and type annotation
+            std::string param = params[i];
+            std::string paramName = param;
+            std::string paramTypeName = "Number"; // Default type
+            
+            size_t colonPos = param.find(':');
             if (colonPos != std::string::npos) {
-                paramName = paramName.substr(0, colonPos);
-                // Remove any trailing whitespace
+                paramName = param.substr(0, colonPos);
+                paramTypeName = param.substr(colonPos + 1);
+                // Remove any leading/trailing whitespace
                 paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                paramTypeName.erase(0, paramTypeName.find_first_not_of(" \t"));
+                paramTypeName.erase(paramTypeName.find_last_not_of(" \t") + 1);
             }
             
             // Create allocas for method parameters so they can be accessed like variables
+            // Use the actual argument type instead of trying to determine it from annotation
+            llvm::Type* actualArgType = argIt->getType();
             llvm::AllocaInst* paramAlloca = generator.createEntryBlockAlloca(
-                func, paramName, llvm::Type::getFloatTy(context));
+                func, paramName, actualArgType);
             // Store the parameter value in the alloca
             generator.getBuilder()->CreateStore(&*argIt, paramAlloca);
             // Add the alloca to the scope
             generator.setNamedValue(paramName, paramAlloca);
+            
+            // Store the semantic type information for the parameter
+            if (!paramTypeName.empty() && paramTypeName != "Number") {
+                generator.getContextObject()->setVariableTypeName(paramName, paramTypeName);
+                std::cout << "[DEBUG] TypeDefinition::codegen - Stored parameter '" << paramName << "' with semantic type '" << paramTypeName << "'" << std::endl;
+            }
         }
         
         // Generate code for the method body
         llvm::Value* returnValue = body->codegen(generator);
         
-        // Check if we need to load the value based on return type annotation
+        // Determine return type from annotation
+        llvm::Type* returnType = func->getReturnType();
+        
+        // Check if we need to load the value or cast based on return type annotation
         if (returnValue && returnValue->getType()->isPointerTy()) {
             // For Number return types, load the value from the pointer
             if (returnTypeAnnotation == "Number" && returnType->isFloatTy()) {
@@ -440,6 +514,12 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
                     returnValue = generator.getBuilder()->CreateLoad(pointedType, returnValue, "loaded." + methodName_local);
                 }
             }
+            // For user-defined types, cast to i8* if needed
+            else if ((returnTypeAnnotation == name || currentContext->hasType(returnTypeAnnotation)) && 
+                     returnType->isPointerTy() && returnType->getPointerElementType()->isIntegerTy(8)) {
+                // Cast the struct pointer to i8*
+                returnValue = generator.getBuilder()->CreateBitCast(returnValue, llvm::Type::getInt8PtrTy(context), "cast.to.i8ptr");
+            }
             // For String return types, keep the pointer as-is since we want i8*
         } else if (returnValue && returnTypeAnnotation == "String" && returnValue->getType()->isIntegerTy(8)) {
             // If we have a single i8 value but need i8*, this is an error
@@ -447,30 +527,28 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
             return nullptr;
         }
         
-        // For setter methods, make sure they return the assigned value
-        if (methodName_local.find("set") == 0 && !returnValue) {
-            // If it's a setter method and no return value was generated,
-            // try to get the parameter value to return
-            if (!params.empty()) {
-                // Extract just the parameter name if it contains type annotation
-                std::string paramName = params[0];
-                size_t colonPos = paramName.find(':');
-                if (colonPos != std::string::npos) {
-                    paramName = paramName.substr(0, colonPos);
-                    // Remove any trailing whitespace
-                    paramName.erase(paramName.find_last_not_of(" \t") + 1);
+        // Ensure the return value matches the expected return type annotation
+        if (returnValue && returnType) {
+            // Check if we need to load a value from a pointer
+            if (returnValue->getType()->isPointerTy() && !returnType->isPointerTy()) {
+                llvm::Type* pointedType = returnValue->getType()->getPointerElementType();
+                // If the pointed type matches the expected return type, load it
+                if (pointedType == returnType) {
+                    returnValue = generator.getBuilder()->CreateLoad(
+                        pointedType, 
+                        returnValue, 
+                        "loaded.return.value");
                 }
-                
-                llvm::Value* paramValue = generator.getNamedValue(paramName);
-                if (paramValue) {
-                    // If it's an alloca, load the value
-                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(paramValue)) {
-                        returnValue = generator.getBuilder()->CreateLoad(
-                            alloca->getAllocatedType(), alloca, paramName);
-                    } else {
-                        returnValue = paramValue;
-                    }
-                }
+            }
+            // Check if types match after potential loading
+            if (returnValue->getType() != returnType) {
+                std::cerr << "Error: Method " << methodName_local 
+                          << " return type mismatch. Expected: ";
+                returnType->print(llvm::errs());
+                std::cerr << ", Got: ";
+                returnValue->getType()->print(llvm::errs());
+                std::cerr << std::endl;
+                return nullptr;
             }
         }
         
@@ -497,9 +575,6 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
         
         // Verify the function
         llvm::verifyFunction(*func);
-        
-        // Store the method in the context
-        currentContext->addMethod(name, methodName_local, func);
     }
     
     // Register the type definition in the context for later lookup

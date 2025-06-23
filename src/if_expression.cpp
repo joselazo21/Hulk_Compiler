@@ -19,9 +19,10 @@ IfExpression::~IfExpression() {
 std::string IfExpression::toString() {
     std::ostringstream oss;
     oss << "if (" << condition->toString() << ") "
-        << thenExpr->toString()
-        << " else "
-        << elseExpr->toString();
+        << thenExpr->toString();
+    if (elseExpr) {
+        oss << " else " << elseExpr->toString();
+    }
     return oss.str();
 }
 
@@ -34,9 +35,11 @@ void IfExpression::printNode(int depth) {
     printIndent(depth);
     std::cout << "│   ├── Then Expression:\n";
     thenExpr->printNode(depth + 2);
-    printIndent(depth);
-    std::cout << "│   └── Else Expression:\n";
-    elseExpr->printNode(depth + 2);
+    if (elseExpr) {
+        printIndent(depth);
+        std::cout << "│   └── Else Expression:\n";
+        elseExpr->printNode(depth + 2);
+    }
 }
 
 bool IfExpression::Validate(IContext* context) {
@@ -50,7 +53,7 @@ bool IfExpression::Validate(IContext* context) {
         SEMANTIC_ERROR("Error in then branch of if-expression", location);
         hasErrors = true;
     }
-    if (!elseExpr->Validate(context)) {
+    if (elseExpr && !elseExpr->Validate(context)) {
         SEMANTIC_ERROR("Error in else branch of if-expression", location);
         hasErrors = true;
     }
@@ -82,13 +85,19 @@ llvm::Value* IfExpression::codegen(CodeGenerator& generator) {
     // 3. Get current function
     llvm::Function* func = generator.getBuilder()->GetInsertBlock()->getParent();
 
-    // 4. Create blocks for then, else, and merge
+    // 4. Create blocks for then, else (if needed), and merge
     llvm::BasicBlock* thenBB = llvm::BasicBlock::Create(generator.getContext(), "ifexpr.then", func);
-    llvm::BasicBlock* elseBB = llvm::BasicBlock::Create(generator.getContext(), "ifexpr.else");
+    llvm::BasicBlock* elseBB = nullptr;
     llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(generator.getContext(), "ifexpr.merge");
 
-    // 5. Conditional branch
-    generator.getBuilder()->CreateCondBr(condVal, thenBB, elseBB);
+    if (elseExpr) {
+        elseBB = llvm::BasicBlock::Create(generator.getContext(), "ifexpr.else");
+        // 5. Conditional branch
+        generator.getBuilder()->CreateCondBr(condVal, thenBB, elseBB);
+    } else {
+        // 5. Conditional branch - if no else, branch directly to merge
+        generator.getBuilder()->CreateCondBr(condVal, thenBB, mergeBB);
+    }
 
     // 6. Emit then block
     generator.getBuilder()->SetInsertPoint(thenBB);
@@ -101,21 +110,43 @@ llvm::Value* IfExpression::codegen(CodeGenerator& generator) {
     
     generator.getBuilder()->CreateBr(mergeBB);
 
-    // 7. Emit else block
-    func->getBasicBlockList().push_back(elseBB);
-    generator.getBuilder()->SetInsertPoint(elseBB);
-    llvm::Value* elseVal = elseExpr->codegen(generator);
-    if (!elseVal) return nullptr;
-    
-    // Store the else value and block before branching
-    llvm::Value* elseValForPhi = elseVal;
-    llvm::BasicBlock* elseBlockForPhi = generator.getBuilder()->GetInsertBlock();
-    
-    generator.getBuilder()->CreateBr(mergeBB);
+    llvm::Value* elseValForPhi = nullptr;
+    llvm::BasicBlock* elseBlockForPhi = nullptr;
+
+    if (elseExpr) {
+        // 7. Emit else block
+        func->getBasicBlockList().push_back(elseBB);
+        generator.getBuilder()->SetInsertPoint(elseBB);
+        llvm::Value* elseVal = elseExpr->codegen(generator);
+        if (!elseVal) return nullptr;
+        
+        // Store the else value and block before branching
+        elseValForPhi = elseVal;
+        elseBlockForPhi = generator.getBuilder()->GetInsertBlock();
+        
+        generator.getBuilder()->CreateBr(mergeBB);
+    }
 
     // 8. Emit merge block
     func->getBasicBlockList().push_back(mergeBB);
     generator.getBuilder()->SetInsertPoint(mergeBB);
+
+    if (!elseExpr) {
+        // If no else clause, return a default value (0 for numbers, empty string for strings)
+        // We'll use the type of the then expression to determine the default
+        llvm::Type* thenType = thenValForPhi->getType();
+        if (thenType->isIntegerTy()) {
+            return llvm::ConstantInt::get(thenType, 0);
+        } else if (thenType->isDoubleTy()) {
+            return llvm::ConstantFP::get(thenType, 0.0);
+        } else if (thenType->isPointerTy()) {
+            // For strings or other pointers, return null pointer
+            return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(thenType));
+        } else {
+            // For other types, try to create a zero value
+            return llvm::Constant::getNullValue(thenType);
+        }
+    }
 
     // Ensure type consistency between branches
     llvm::Type* thenType = thenValForPhi->getType();

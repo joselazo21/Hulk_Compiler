@@ -97,10 +97,11 @@ bool MethodCall::Validate(IContext* context) {
     // If the object is a variable, get its semantic type name from context
     if (auto variable = dynamic_cast<Variable*>(object)) {
         objectTypeName = context->getVariableTypeName(variable->getName());
-        std::cout << "[DEBUG] MethodCall::Validate - Variable " << variable->getName() << " has type: " << objectTypeName << std::endl;
+        std::cout << "[DEBUG] MethodCall::Validate - Variable '" << variable->getName() << "' has type '" << objectTypeName << "'" << std::endl;
         
         // If we don't have a semantic type name, fall back to LLVM type analysis
         if (objectTypeName.empty()) {
+            std::cout << "[DEBUG] MethodCall::Validate - No semantic type found for '" << variable->getName() << "', trying LLVM type analysis" << std::endl;
             llvm::Type* varType = context->getVariableType(variable->getName());
             if (varType && varType->isPointerTy()) {
                 llvm::Type* pointedType = varType->getPointerElementType();
@@ -146,6 +147,111 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
     // Get the builder once at the beginning
     llvm::IRBuilder<>* builder = generator.getBuilder();
     
+    // First, try to determine the object type name from the AST
+    std::string objectTypeName;
+    
+    // If the object is a variable, get its semantic type name from context
+    if (auto variable = dynamic_cast<Variable*>(object)) {
+        objectTypeName = generator.getContextObject()->getVariableTypeName(variable->getName());
+        std::cout << "[DEBUG] MethodCall::codegen - Variable '" << variable->getName() << "' has semantic type '" << objectTypeName << "'" << std::endl;
+        
+        // If we don't have a semantic type name, try to debug the context chain
+        if (objectTypeName.empty()) {
+            std::cout << "[DEBUG] MethodCall::codegen - No semantic type found, checking context chain..." << std::endl;
+            IContext* currentContext = generator.getContextObject();
+            int depth = 0;
+            while (currentContext && depth < 10) {
+                std::string typeFromContext = currentContext->getVariableTypeName(variable->getName());
+                std::cout << "[DEBUG] MethodCall::codegen - Context depth " << depth << ": type = '" << typeFromContext << "'" << std::endl;
+                if (!typeFromContext.empty()) {
+                    objectTypeName = typeFromContext;
+                    break;
+                }
+                // Try to get parent context (this might not be directly accessible)
+                depth++;
+                break; // For now, just check the current context
+            }
+        }
+    }
+    // If the object is a member access, we need to determine the type of the member
+    else if (auto memberAccess = dynamic_cast<MemberAccess*>(object)) {
+        // For member access, we need to look up the field type in the parent object
+        std::cout << "[DEBUG] MethodCall::codegen - Member access detected for member: " << memberAccess->getMember() << std::endl;
+        
+        // Try to get the parent object type
+        if (auto parentVar = dynamic_cast<Variable*>(memberAccess->getObject())) {
+            std::string parentTypeName = generator.getContextObject()->getVariableTypeName(parentVar->getName());
+            // Extract base type name if it has a numeric suffix
+            if (!parentTypeName.empty()) {
+                size_t dotPos = parentTypeName.find('.');
+                if (dotPos != std::string::npos) {
+                    parentTypeName = parentTypeName.substr(0, dotPos);
+                }
+            }
+            if (!parentTypeName.empty()) {
+                // Look up the field type in the parent type definition
+                TypeDefinition* parentTypeDef = generator.getContextObject()->getTypeDefinition(parentTypeName);
+                if (parentTypeDef) {
+                    // Find the field and determine its type
+                    const auto& fields = parentTypeDef->getFields();
+                    for (const auto& field : fields) {
+                        std::string fieldName = field.first;
+                        // Remove type annotation if present
+                        size_t colonPos = fieldName.find(':');
+                        if (colonPos != std::string::npos) {
+                            std::string fieldTypeName = fieldName.substr(colonPos + 1);
+                            fieldName = fieldName.substr(0, colonPos);
+                            // Remove whitespace
+                            fieldName.erase(fieldName.find_last_not_of(" \t") + 1);
+                            fieldTypeName.erase(0, fieldTypeName.find_first_not_of(" \t"));
+                            fieldTypeName.erase(fieldTypeName.find_last_not_of(" \t") + 1);
+                            
+                            if (fieldName == memberAccess->getMember()) {
+                                objectTypeName = fieldTypeName;
+                                std::cout << "[DEBUG] MethodCall::codegen - Field '" << fieldName << "' has type '" << fieldTypeName << "'" << std::endl;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (auto selfExpr = dynamic_cast<SelfExpression*>(memberAccess->getObject())) {
+            // For self.member, get the current type and look up the member type
+            std::string currentTypeName = generator.getContextObject()->getCurrentType();
+            if (!currentTypeName.empty()) {
+                TypeDefinition* typeDef = generator.getContextObject()->getTypeDefinition(currentTypeName);
+                if (typeDef) {
+                    const auto& fields = typeDef->getFields();
+                    for (const auto& field : fields) {
+                        std::string fieldName = field.first;
+                        // Remove type annotation if present
+                        size_t colonPos = fieldName.find(':');
+                        if (colonPos != std::string::npos) {
+                            std::string fieldTypeName = fieldName.substr(colonPos + 1);
+                            fieldName = fieldName.substr(0, colonPos);
+                            // Remove whitespace
+                            fieldName.erase(fieldName.find_last_not_of(" \t") + 1);
+                            fieldTypeName.erase(0, fieldTypeName.find_first_not_of(" \t"));
+                            fieldTypeName.erase(fieldTypeName.find_last_not_of(" \t") + 1);
+                            
+                            if (fieldName == memberAccess->getMember()) {
+                                objectTypeName = fieldTypeName;
+                                std::cout << "[DEBUG] MethodCall::codegen - Self field '" << fieldName << "' has type '" << fieldTypeName << "'" << std::endl;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // If the object is a self expression, get the current type
+    else if (dynamic_cast<SelfExpression*>(object)) {
+        objectTypeName = generator.getContextObject()->getCurrentType();
+        std::cout << "[DEBUG] MethodCall::codegen - Self expression has type '" << objectTypeName << "'" << std::endl;
+    }
+    
     // If objectValue is a pointer to a field, we need to load it
     // But we need to be careful with runtime objects stored as i8*
     if (objectValue->getType()->isPointerTy()) {
@@ -161,7 +267,6 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
     
     // If it's a pointer, get the pointed-to type
     llvm::StructType* structType = nullptr;
-    std::string objectTypeName;
     
     if (objectType->isPointerTy()) {
         llvm::Type* pointedType = objectType->getPointerElementType();
@@ -169,39 +274,44 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
             structType = llvm::cast<llvm::StructType>(pointedType);
         } else if (pointedType->isIntegerTy(8)) {
             // This is an i8* (generic pointer), we need to determine the actual type
-            // Get the object type name from the variable context
-            if (auto variable = dynamic_cast<Variable*>(object)) {
-                objectTypeName = generator.getContextObject()->getVariableTypeName(variable->getName());
-                std::cout << "[DEBUG] MethodCall::codegen - Variable " << variable->getName() << " has type name: " << objectTypeName << std::endl;
-                if (!objectTypeName.empty()) {
-                    // Get the runtime struct type for this object
-                    std::string runtimeTypeName = "runtime." + objectTypeName;
-                    std::cout << "[DEBUG] MethodCall::codegen - Looking for runtime type: " << runtimeTypeName << std::endl;
-                    structType = generator.getContextObject()->getType(runtimeTypeName);
-                    if (structType) {
-                        std::cout << "[DEBUG] MethodCall::codegen - Found runtime struct type" << std::endl;
-                        // Cast the i8* back to the proper runtime struct type
-                        llvm::Type* runtimePtrType = structType->getPointerTo();
-                        objectValue = builder->CreateBitCast(objectValue, runtimePtrType, "cast.to.runtime");
-                    } else {
-                        std::cout << "[DEBUG] MethodCall::codegen - Runtime struct type not found, trying base type" << std::endl;
-                        // Try to get the base struct type instead
-                        structType = generator.getContextObject()->getType(objectTypeName);
-                        if (structType) {
-                            std::cout << "[DEBUG] MethodCall::codegen - Found base struct type" << std::endl;
-                            // Cast the i8* to the base struct type pointer
-                            llvm::Type* basePtrType = structType->getPointerTo();
-                            objectValue = builder->CreateBitCast(objectValue, basePtrType, "cast.to.base");
-                        }
-                    }
+            if (!objectTypeName.empty()) {
+                // Extract the base type name (remove numeric suffix if present)
+                std::string baseTypeName = objectTypeName;
+                size_t dotPos = baseTypeName.find('.');
+                if (dotPos != std::string::npos) {
+                    baseTypeName = baseTypeName.substr(0, dotPos);
+                }
+                std::cout << "[DEBUG] MethodCall::codegen - Base type name: " << baseTypeName << std::endl;
+                
+                // Get the runtime struct type for this object
+                std::string runtimeTypeName = "runtime." + baseTypeName;
+                structType = generator.getContextObject()->getType(runtimeTypeName);
+                if (structType) {
+                    std::cout << "[DEBUG] MethodCall::codegen - Found runtime struct type: " << runtimeTypeName << std::endl;
+                    // Cast the i8* back to the proper runtime struct type
+                    llvm::Type* runtimePtrType = structType->getPointerTo();
+                    objectValue = builder->CreateBitCast(objectValue, runtimePtrType, "cast.to.runtime");
                 } else {
-                    std::cout << "[DEBUG] MethodCall::codegen - No type name found for variable" << std::endl;
+                    std::cout << "[DEBUG] MethodCall::codegen - Runtime struct not found, trying base struct: " << baseTypeName << std::endl;
+                    // Try to get the base struct type instead
+                    structType = generator.getContextObject()->getType(baseTypeName);
+                    if (structType) {
+                        std::cout << "[DEBUG] MethodCall::codegen - Found base struct type: " << baseTypeName << std::endl;
+                        // Cast the i8* to the base struct type pointer
+                        llvm::Type* basePtrType = structType->getPointerTo();
+                        objectValue = builder->CreateBitCast(objectValue, basePtrType, "cast.to.base");
+                    }
                 }
             }
         }
     }
     
     if (!structType) {
+        std::cout << "[ERROR] MethodCall::codegen - Cannot determine struct type for object" << std::endl;
+        std::cout << "[ERROR] - Object type name: '" << objectTypeName << "'" << std::endl;
+        std::cout << "[ERROR] - LLVM object type: ";
+        objectType->print(llvm::errs());
+        std::cout << std::endl;
         SEMANTIC_ERROR("Cannot call method on non-object type", location);
         return nullptr;
     }
@@ -209,8 +319,12 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
     // Get the struct name from the type
     std::string structName;
     if (!objectTypeName.empty()) {
-        // We already determined the object type name
+        // We already determined the object type name, extract base name
         structName = objectTypeName;
+        size_t dotPos = structName.find('.');
+        if (dotPos != std::string::npos) {
+            structName = structName.substr(0, dotPos);
+        }
     } else {
         structName = structType->getName().str();
         // Remove "struct." prefix if present
@@ -264,30 +378,35 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
         llvm::StructType* baseStructType = context->getType(baseTypeName);
         
         if (baseStructType) {
-            std::cout << "[DEBUG] Converting runtime struct " << originalStructName << " to base struct " << baseTypeName << std::endl;
+            // For runtime structs, we need to check if the method expects the base struct type
+            // or if it can work with the runtime struct directly
             
-            // Create a GEP to get a pointer to the data part (skipping TypeInfo at index 0)
-            llvm::Value* indices[2] = {
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 0),
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 1) // Skip TypeInfo field
-            };
-            
-            // Get pointer to the first actual field (after TypeInfo)
-            llvm::Value* dataPtr = builder->CreateInBoundsGEP(
-                structType, // Use the runtime struct type
-                objectValue,
-                {indices[0], indices[1]},
-                "data.ptr"
-            );
-            
-            std::cout << "[DEBUG] Created GEP to skip TypeInfo field" << std::endl;
-            
-            // Cast this pointer to the base struct type pointer
-            llvm::Type* baseStructPtrType = baseStructType->getPointerTo();
-            objectValue = builder->CreateBitCast(dataPtr, baseStructPtrType, "cast.to." + baseTypeName);
-            structName = baseTypeName;
-            
-            std::cout << "[DEBUG] Cast to base struct type: " << baseTypeName << std::endl;
+            // First, check if the method exists for the runtime type
+            llvm::Function* runtimeMethod = generator.getModule()->getFunction(originalStructName + "." + methodName);
+            if (runtimeMethod) {
+                // Method exists for runtime type, use it directly
+                structName = originalStructName;
+            } else {
+                // Method doesn't exist for runtime type, need to convert to base type
+                // Create a GEP to get a pointer to the data part (skipping TypeInfo at index 0)
+                llvm::Value* indices[2] = {
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 0),
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 1) // Skip TypeInfo field
+                };
+                
+                // Get pointer to the first actual field (after TypeInfo)
+                llvm::Value* dataPtr = builder->CreateInBoundsGEP(
+                    structType, // Use the runtime struct type
+                    objectValue,
+                    {indices[0], indices[1]},
+                    "data.ptr"
+                );
+                
+                // Cast this pointer to the base struct type pointer
+                llvm::Type* baseStructPtrType = baseStructType->getPointerTo();
+                objectValue = builder->CreateBitCast(dataPtr, baseStructPtrType, "cast.to." + baseTypeName);
+                structName = baseTypeName;
+            }
         }
     }
     
@@ -317,34 +436,68 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
     
     argValues.push_back(objectValue); // 'self' is the first argument
     
-    for (auto* arg : args) {
-        llvm::Value* argValue = arg->codegen(generator);
+    for (size_t i = 0; i < args.size(); ++i) {
+        llvm::Value* argValue = args[i]->codegen(generator);
         if (!argValue) {
             return nullptr;
         }
+        
+        // Check if we need to convert the argument type to match the expected parameter type
+        if (method && i + 1 < method->getFunctionType()->getNumParams()) {
+            llvm::Type* expectedType = method->getFunctionType()->getParamType(i + 1); // +1 because first param is 'self'
+            llvm::Type* actualType = argValue->getType();
+            
+            // If types don't match, try to convert
+            if (actualType != expectedType) {
+                // Handle common type conversions
+                if (expectedType->isFloatTy() && actualType->isIntegerTy()) {
+                    // Convert integer to float
+                    argValue = builder->CreateSIToFP(argValue, expectedType, "int_to_float");
+                } else if (expectedType->isIntegerTy() && actualType->isFloatTy()) {
+                    // Convert float to integer
+                    argValue = builder->CreateFPToSI(argValue, expectedType, "float_to_int");
+                } else if (expectedType->isFloatTy() && actualType->isFloatTy()) {
+                    // Both are float types but different precision
+                    if (actualType->isDoubleTy() && expectedType->isFloatTy()) {
+                        argValue = builder->CreateFPTrunc(argValue, expectedType, "double_to_float");
+                    } else if (actualType->isFloatTy() && expectedType->isDoubleTy()) {
+                        argValue = builder->CreateFPExt(argValue, expectedType, "float_to_double");
+                    }
+                }
+                // Add more type conversions as needed
+            }
+        }
+        
         argValues.push_back(argValue);
     }
     
-    // Debug: print method call information
-    std::cout << "[DEBUG] Calling method " << methodName << " on object of type " << structName << std::endl;
-    std::cout << "[DEBUG] Method function: " << (method ? method->getName().str() : "null") << std::endl;
-    std::cout << "[DEBUG] Number of arguments: " << argValues.size() << std::endl;
+    // Debug: Print argument types for debugging
     for (size_t i = 0; i < argValues.size(); ++i) {
         std::string argTypeStr;
         llvm::raw_string_ostream rso(argTypeStr);
         argValues[i]->getType()->print(rso);
-        std::cout << "[DEBUG] Argument " << i << " type: " << argTypeStr << std::endl;
+        std::cout << "[DEBUG] MethodCall::codegen - Argument " << i << " type: " << rso.str() << std::endl;
+    }
+    
+    // Debug: Print expected parameter types
+    if (method) {
+        for (size_t i = 0; i < method->getFunctionType()->getNumParams(); ++i) {
+            std::string paramTypeStr;
+            llvm::raw_string_ostream rso(paramTypeStr);
+            method->getFunctionType()->getParamType(i)->print(rso);
+            std::cout << "[DEBUG] MethodCall::codegen - Expected parameter " << i << " type: " << rso.str() << std::endl;
+        }
     }
     
     // Call the method
     llvm::Value* result = builder->CreateCall(method, argValues, "call." + methodName);
     
-    // Debug: print result type
+
     if (result) {
         std::string resultTypeStr;
         llvm::raw_string_ostream rso(resultTypeStr);
         result->getType()->print(rso);
-        std::cout << "[DEBUG] Method call result type: " << resultTypeStr << std::endl;
+
     }
     
     return result;

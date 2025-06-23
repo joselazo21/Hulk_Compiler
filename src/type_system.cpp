@@ -2,6 +2,27 @@
 #include "tree.hpp"
 #include <iostream>
 
+const Type* TypeRegistry::getType(const std::string& name) const {
+    auto it = types.find(name);
+    if (it != types.end()) {
+        return it->second.get();
+    }
+    
+    // If not found and we have a context, try to create the type dynamically
+    if (context && context->hasType(name)) {
+        // Create a UserDefinedType for this custom type
+        auto userType = std::make_unique<UserDefinedType>(name);
+        const Type* result = userType.get();
+        
+        // Cast away const to register the type (this is a design compromise)
+        const_cast<TypeRegistry*>(this)->registerType(name, std::move(userType));
+        return result;
+    }
+    
+    return nullptr;
+}
+
+
 const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     if (!expr) return nullptr;
     
@@ -17,14 +38,41 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     
     // Variables
     if (auto variable = dynamic_cast<Variable*>(expr)) {
-        // First check if the variable has a type annotation stored in context
+        // First check if the variable has a semantic type name stored in context
         if (context) {
+            std::string typeName = context->getVariableTypeName(variable->getName());
+            if (!typeName.empty()) {
+                // Return the semantic type
+                if (typeName == "Number") {
+                    return registry.getNumberType();
+                } else if (typeName == "String") {
+                    return registry.getStringType();
+                } else if (typeName == "Boolean") {
+                    return registry.getBooleanType();
+                } else {
+                    // For custom types, get from registry
+                    return registry.getType(typeName);
+                }
+            }
+            
+            // Fallback: check LLVM type
             llvm::Type* llvmType = context->getVariableType(variable->getName());
             if (llvmType) {
                 // Convert LLVM type back to our type system
                 if (llvmType->isFloatTy()) {
                     return registry.getNumberType();
                 } else if (llvmType->isPointerTy()) {
+                    // Check if it's a struct pointer (custom type)
+                    llvm::Type* pointedType = llvmType->getPointerElementType();
+                    if (pointedType->isStructTy()) {
+                        llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
+                        std::string structName = structType->getName().str();
+                        // Remove "struct." prefix if present
+                        if (structName.find("struct.") == 0) {
+                            structName = structName.substr(7);
+                        }
+                        return registry.getType(structName);
+                    }
                     return registry.getStringType();
                 } else if (llvmType->isIntegerTy(1)) {
                     return registry.getBooleanType();
@@ -77,9 +125,58 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     }
     
     // Function calls
-    if (dynamic_cast<FunctionCall*>(expr)) {
-        // For now, assume function calls return Number
-        // This should be improved to look up actual function signatures
+    if (auto functionCall = dynamic_cast<FunctionCall*>(expr)) {
+        std::string funcName = functionCall->getFunctionName();
+        
+        // Try to get function return type from context first
+        if (context) {
+            std::string returnType = context->getFunctionReturnType(funcName);
+            if (!returnType.empty()) {
+                if (returnType == "Number") {
+                    return registry.getNumberType();
+                } else if (returnType == "String") {
+                    return registry.getStringType();
+                } else if (returnType == "Boolean") {
+                    return registry.getBooleanType();
+                } else {
+                    // For custom types, check if they exist in the context
+                    std::cout << "[DEBUG] TypeChecker::inferType - Checking custom type '" << returnType << "'" << std::endl;
+                    if (context && context->hasType(returnType)) {
+                        std::cout << "[DEBUG] TypeChecker::inferType - Type '" << returnType << "' exists in context" << std::endl;
+                        // Try to get the type from registry first
+                        const Type* customType = registry.getType(returnType);
+                        if (customType) {
+                            std::cout << "[DEBUG] TypeChecker::inferType - Found type '" << returnType << "' in registry" << std::endl;
+                            return customType;
+                        }
+                        std::cout << "[DEBUG] TypeChecker::inferType - Type '" << returnType << "' not in registry, creating dynamically" << std::endl;
+                        // If not in registry but exists in context, create it dynamically
+                        // The registry's getType method should handle this via dynamic creation
+                        const Type* dynamicType = registry.getType(returnType);
+                        if (dynamicType) {
+                            std::cout << "[DEBUG] TypeChecker::inferType - Successfully created dynamic type '" << returnType << "'" << std::endl;
+                            return dynamicType;
+                        } else {
+                            std::cout << "[DEBUG] TypeChecker::inferType - Failed to create dynamic type '" << returnType << "'" << std::endl;
+                        }
+                    } else {
+                        std::cout << "[DEBUG] TypeChecker::inferType - Type '" << returnType << "' not found in context" << std::endl;
+                    }
+                    // If not found, default to Number
+                    std::cout << "[DEBUG] TypeChecker::inferType - Defaulting to Number for type '" << returnType << "'" << std::endl;
+                    return registry.getNumberType();
+                }
+            }
+        }
+        
+        // Fallback: Handle built-in functions with known return types
+        if (funcName == "random" || funcName == "rand" || funcName == "sqrt" || 
+            funcName == "sin" || funcName == "cos" || funcName == "pow" || 
+            funcName == "print" || funcName == "range") {
+            return registry.getNumberType();
+        }
+        
+        // Default to Number for unknown functions
         return registry.getNumberType();
     }
     
@@ -87,7 +184,10 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     if (auto methodCall = dynamic_cast<MethodCall*>(expr)) {
         std::string methodName = methodCall->getMethodName();
         
-        // Get the object's variable to determine its type
+        // Get the object's type to determine the method return type
+        std::string objectTypeName;
+        
+        // Handle Variable objects (e.g., obj.method())
         if (auto variable = dynamic_cast<Variable*>(methodCall->getObject())) {
             std::string objectName = variable->getName();
             
@@ -98,20 +198,27 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
                     llvm::Type* pointedType = llvmType->getPointerElementType();
                     if (pointedType->isStructTy()) {
                         llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
-                        std::string structName = structType->getName().str();
+                        objectTypeName = structType->getName().str();
                         
                         // Remove "struct." prefix if present
-                        if (structName.find("struct.") == 0) {
-                            structName = structName.substr(7);
-                        }
-                        
-                        // Now we have the actual type name, use it to analyze the method
-                        const Type* returnType = inferMethodReturnType(structName, methodName, context);
-                        if (returnType) {
-                            return returnType;
+                        if (objectTypeName.find("struct.") == 0) {
+                            objectTypeName = objectTypeName.substr(7);
                         }
                     }
                 }
+            }
+        }
+        // Handle SelfExpression objects (e.g., self.method())
+        else if (dynamic_cast<SelfExpression*>(methodCall->getObject())) {
+            // Get the current type being processed from context
+            objectTypeName = context->getCurrentType();
+        }
+        
+        // If we have a type name, use it to analyze the method
+        if (!objectTypeName.empty()) {
+            const Type* returnType = inferMethodReturnType(objectTypeName, methodName, context);
+            if (returnType) {
+                return returnType;
             }
         }
         
@@ -129,6 +236,38 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
                 const Type* fieldType = userType->getFieldType(memberAccess->getMember());
                 if (fieldType) {
                     return fieldType;
+                }
+            }
+            
+            // For custom types, we need to infer field types based on the type definition
+            std::string typeName = objectType->toString();
+            if (context) {
+                TypeDefinition* typeDef = context->getTypeDefinition(typeName);
+                if (typeDef) {
+                    // Get the fields from the type definition
+                    const auto& fields = typeDef->getFields();
+                    std::string memberName = memberAccess->getMember();
+                    
+                    // Look for the field in the type definition
+                    for (const auto& field : fields) {
+                        if (field.first == memberName) {
+                            // Found the field, now infer its type from the initialization expression
+                            Expression* initExpr = field.second;
+                            if (initExpr) {
+                                // If it's a NewExpression, return the type being instantiated
+                                if (auto newExpr = dynamic_cast<NewExpression*>(initExpr)) {
+                                    return registry.getType(newExpr->getTypeName());
+                                }
+                                // For other expressions, recursively infer the type
+                                const Type* fieldType = inferType(initExpr, context);
+                                if (fieldType) {
+                                    return fieldType;
+                                }
+                            }
+                            // If no initialization expression, assume Number (common default)
+                            return registry.getNumberType();
+                        }
+                    }
                 }
             }
         }
@@ -165,58 +304,58 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     // Let-in expressions
     if (auto letIn = dynamic_cast<LetIn*>(expr)) {
         // The type of a let-in expression is the type of its body
-        std::cout << "[DEBUG] TypeChecker::inferType - Processing LetIn expression\n";
+
         Expression* inExpr = letIn->getInExpression();
-        std::cout << "[DEBUG] TypeChecker::inferType - LetIn inExpression = " << inExpr << "\n";
+
         const Type* resultType = inferType(inExpr, context);
-        std::cout << "[DEBUG] TypeChecker::inferType - LetIn inferred type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+
         return resultType;
     }
     
     // Block expressions
     if (auto block = dynamic_cast<BlockExpression*>(expr)) {
         // The type of a block is the type of its last statement
-        std::cout << "[DEBUG] TypeChecker::inferType - Processing BlockExpression\n";
+
         const auto& statements = block->getStatements();
-        std::cout << "[DEBUG] TypeChecker::inferType - BlockExpression has " << statements.size() << " statements\n";
+
         if (!statements.empty()) {
             // Check from the last statement backwards
             for (auto it = statements.rbegin(); it != statements.rend(); ++it) {
                 Statement* stmt = *it;
-                std::cout << "[DEBUG] TypeChecker::inferType - Checking statement: " << stmt << "\n";
+
                 
                 // If it's an expression statement, return its type
                 if (auto exprStmt = dynamic_cast<ExpressionStatement*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Found ExpressionStatement\n";
+
                     const Type* resultType = inferType(exprStmt->getExpression(), context);
-                    std::cout << "[DEBUG] TypeChecker::inferType - ExpressionStatement type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+
                     return resultType;
                 }
                 
                 // Skip function declarations as they don't contribute to the return value
                 if (dynamic_cast<FunctionDeclaration*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Skipping FunctionDeclaration\n";
+
                     continue;
                 }
                 
                 // For ForStatement, analyze its body to determine return type
                 if (auto forStmt = dynamic_cast<ForStatement*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Found ForStatement\n";
+
                     // Get the last expression from the for loop body
                     BlockStatement* forBody = forStmt->getBody();
                     if (forBody) {
-                        std::cout << "[DEBUG] TypeChecker::inferType - ForStatement has body\n";
+
                         Expression* lastExpr = forBody->getLastExpression();
                         if (lastExpr) {
-                            std::cout << "[DEBUG] TypeChecker::inferType - ForStatement body has last expression: " << lastExpr << "\n";
+
                             const Type* resultType = inferType(lastExpr, context);
-                            std::cout << "[DEBUG] TypeChecker::inferType - ForStatement last expression type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+
                             return resultType;
                         } else {
-                            std::cout << "[DEBUG] TypeChecker::inferType - ForStatement body has no last expression\n";
+
                         }
                     } else {
-                        std::cout << "[DEBUG] TypeChecker::inferType - ForStatement has no body\n";
+
                     }
                     // If no expression found in for body, continue looking
                     continue;
@@ -224,22 +363,22 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
                 
                 // For WhileStatement, analyze its body to determine return type
                 if (auto whileStmt = dynamic_cast<WhileStatement*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Found WhileStatement\n";
+
                     // Get the last expression from the while loop body
                     BlockStatement* whileBody = whileStmt->getBody();
                     if (whileBody) {
-                        std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement has body\n";
+
                         Expression* lastExpr = whileBody->getLastExpression();
                         if (lastExpr) {
-                            std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement body has last expression: " << lastExpr << "\n";
+
                             const Type* resultType = inferType(lastExpr, context);
-                            std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement last expression type: " << (resultType ? resultType->toString() : "nullptr") << "\n";
+
                             return resultType;
                         } else {
-                            std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement body has no last expression\n";
+
                         }
                     } else {
-                        std::cout << "[DEBUG] TypeChecker::inferType - WhileStatement has no body\n";
+
                     }
                     // If no expression found in while body, continue looking
                     continue;
@@ -247,27 +386,44 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
                 
                 // Let's check what type of statement this actually is
                 if (dynamic_cast<Assignment*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is Assignment\n";
+
                 } else if (dynamic_cast<IfStatement*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is IfStatement\n";
+
                 } else if (dynamic_cast<WhileStatement*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is WhileStatement\n";
+
                 } else if (dynamic_cast<ReturnStatement*>(stmt)) {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Statement is ReturnStatement\n";
+
                 } else {
-                    std::cout << "[DEBUG] TypeChecker::inferType - Statement type unknown\n";
+
                 }
-                std::cout << "[DEBUG] TypeChecker::inferType - Statement type not handled, continuing\n";
+
                 // For other statement types that don't contribute to return value
                 // we continue looking backwards
             }
         }
-        std::cout << "[DEBUG] TypeChecker::inferType - BlockExpression returning Void\n";
+
         return registry.getVoidType();
     }
     
+    // New expressions (object instantiation)
+    if (auto newExpr = dynamic_cast<NewExpression*>(expr)) {
+        std::string typeName = newExpr->getTypeName();
+        // Return the type being instantiated
+        const Type* customType = registry.getType(typeName);
+        if (customType) {
+            return customType;
+        }
+        // If type not found in registry, it might be a custom type
+        // Try to get it from context
+        if (context && context->hasType(typeName)) {
+            // The registry should create it dynamically via getType()
+            return registry.getType(typeName);
+        }
+        return nullptr;
+    }
+    
     // Base expressions (base() calls)
-    if (auto baseExpr = dynamic_cast<BaseExpression*>(expr)) {
+    if (dynamic_cast<BaseExpression*>(expr)) {
         // A base() call returns the same type as the current method in the parent class
         // For now, we'll assume it returns String type since it's used in string concatenation
         // In a more sophisticated implementation, we'd look up the parent method's return type
@@ -279,44 +435,118 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
 }
 
 const Type* TypeChecker::inferMethodReturnType(const std::string& typeName, const std::string& methodName, IContext* context) {
-    if (!context) return nullptr;
+
+    
+    if (!context) {
+
+        return nullptr;
+    }
     
     // Get the type definition from context
     TypeDefinition* typeDef = context->getTypeDefinition(typeName);
-    if (!typeDef) return nullptr;
+    if (!typeDef) {
+
+        return nullptr;
+    }
     
-    // Find the method in the type definition
-    const auto& methods = typeDef->getMethods();
-    for (const auto& method : methods) {
-        if (method.first == methodName) {
-            // Found the method, analyze its body
-            Expression* methodBody = method.second.second;
-            if (methodBody) {
-                // Create a temporary context for method analysis
-                IContext* methodContext = context->createChildContext();
+
+    
+    // Check typed methods first (methods with return type annotations)
+    if (typeDef->getUseTypedMethods()) {
+        const auto& typedMethods = typeDef->getTypedMethods();
+
+        
+        for (const auto& method : typedMethods) {
+
+            if (method.first == methodName) {
+
+                // Found the method, check if it has a return type annotation
+                const std::string& returnTypeAnnotation = method.second.returnType;
+
                 
-                // Add 'self' to the context
-                methodContext->addVariable("self");
-                
-                // Add method parameters to the context
-                const auto& params = method.second.first;
-                for (const auto& param : params) {
-                    // Extract just the parameter name if it contains type annotation
-                    std::string paramName = param;
-                    size_t colonPos = paramName.find(':');
-                    if (colonPos != std::string::npos) {
-                        paramName = paramName.substr(0, colonPos);
-                        // Remove any trailing whitespace
-                        paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                if (!returnTypeAnnotation.empty()) {
+                    // Return the annotated type directly
+                    if (returnTypeAnnotation == "String") {
+
+                        return registry.getStringType();
+                    } else if (returnTypeAnnotation == "Number") {
+
+                        return registry.getNumberType();
+                    } else if (returnTypeAnnotation == "Boolean") {
+
+                        return registry.getBooleanType();
+                    } else {
+                        // For user-defined types, default to Number for now
+
+                        return registry.getNumberType();
                     }
-                    methodContext->addVariable(paramName);
                 }
                 
-                // Infer the type of the method body
-                const Type* returnType = inferType(methodBody, methodContext);
-                
-                delete methodContext;
-                return returnType;
+                // If no return type annotation, analyze the body
+                Expression* methodBody = method.second.body;
+                if (methodBody) {
+                    // Create a temporary context for method analysis
+                    IContext* methodContext = context->createChildContext();
+                    
+                    // Add 'self' to the context
+                    methodContext->addVariable("self");
+                    
+                    // Add method parameters to the context
+                    const auto& params = method.second.params;
+                    for (const auto& param : params) {
+                        // Extract just the parameter name if it contains type annotation
+                        std::string paramName = param;
+                        size_t colonPos = paramName.find(':');
+                        if (colonPos != std::string::npos) {
+                            paramName = paramName.substr(0, colonPos);
+                            // Remove any trailing whitespace
+                            paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                        }
+                        methodContext->addVariable(paramName);
+                    }
+                    
+                    // Infer the type of the method body
+                    const Type* returnType = inferType(methodBody, methodContext);
+                    
+                    delete methodContext;
+                    return returnType;
+                }
+            }
+        }
+    } else {
+        // Fall back to legacy methods
+        const auto& methods = typeDef->getMethods();
+        for (const auto& method : methods) {
+            if (method.first == methodName) {
+                // Found the method, analyze its body
+                Expression* methodBody = method.second.second;
+                if (methodBody) {
+                    // Create a temporary context for method analysis
+                    IContext* methodContext = context->createChildContext();
+                    
+                    // Add 'self' to the context
+                    methodContext->addVariable("self");
+                    
+                    // Add method parameters to the context
+                    const auto& params = method.second.first;
+                    for (const auto& param : params) {
+                        // Extract just the parameter name if it contains type annotation
+                        std::string paramName = param;
+                        size_t colonPos = paramName.find(':');
+                        if (colonPos != std::string::npos) {
+                            paramName = paramName.substr(0, colonPos);
+                            // Remove any trailing whitespace
+                            paramName.erase(paramName.find_last_not_of(" \t") + 1);
+                        }
+                        methodContext->addVariable(paramName);
+                    }
+                    
+                    // Infer the type of the method body
+                    const Type* returnType = inferType(methodBody, methodContext);
+                    
+                    delete methodContext;
+                    return returnType;
+                }
             }
         }
     }

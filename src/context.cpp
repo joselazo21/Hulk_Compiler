@@ -21,8 +21,22 @@ void Context::initializeBuiltins() {
     // Add print as a predefined function that accepts any number of arguments
     // Empty parameter vector indicates it accepts any number of arguments
     functions["print"] = std::vector<std::string>();
+    
+    // Also add to typed functions
+    FunctionInfo printInfo;
+    printInfo.params = std::vector<std::string>();
+    printInfo.paramTypes = std::vector<std::string>();
+    printInfo.returnType = "Number";
+    typedFunctions["print"] = printInfo;
 
     functions["range"] = std::vector<std::string>{"start", "end"};
+    
+    // Add range to typed functions
+    FunctionInfo rangeInfo;
+    rangeInfo.params = std::vector<std::string>{"start", "end"};
+    rangeInfo.paramTypes = std::vector<std::string>{"Number", "Number"};
+    rangeInfo.returnType = "Number"; // For now, treat as Number
+    typedFunctions["range"] = rangeInfo;
     
     // Add math functions (integer versions)
     functions["sqrt_i32"] = std::vector<std::string>{"x"};
@@ -34,8 +48,34 @@ void Context::initializeBuiltins() {
     functions["sin"] = std::vector<std::string>{"x"};
     functions["cos"] = std::vector<std::string>{"x"};
     
+    // Add math functions to typed functions
+    FunctionInfo mathInfo;
+    mathInfo.params = std::vector<std::string>{"x"};
+    mathInfo.paramTypes = std::vector<std::string>{"Number"};
+    mathInfo.returnType = "Number";
+    typedFunctions["sqrt"] = mathInfo;
+    typedFunctions["sin"] = mathInfo;
+    typedFunctions["cos"] = mathInfo;
+    
     // Add rand function (no parameters)
     functions["rand"] = std::vector<std::string>();
+    
+    // Add rand to typed functions
+    FunctionInfo randInfo;
+    randInfo.params = std::vector<std::string>();
+    randInfo.paramTypes = std::vector<std::string>();
+    randInfo.returnType = "Number";
+    typedFunctions["rand"] = randInfo;
+    
+    // Add random function (one parameter)
+    functions["random"] = std::vector<std::string>{"max"};
+    
+    // Add random to typed functions
+    FunctionInfo randomInfo;
+    randomInfo.params = std::vector<std::string>{"max"};
+    randomInfo.paramTypes = std::vector<std::string>{"Number"};
+    randomInfo.returnType = "Number";
+    typedFunctions["random"] = randomInfo;
     
     // Register predefined types for 'is' expressions
     // These are registered with nullptr as they are built-in types without struct definitions
@@ -106,23 +146,18 @@ bool Context::checkFunctionCall(const std::string& name, const std::vector<std::
         
         // Check arity
         if (funcInfo.paramTypes.size() != argTypes.size()) {
-            std::cout << "[DEBUG] Function " << name << " arity mismatch: expected " 
-                      << funcInfo.paramTypes.size() << ", got " << argTypes.size() << std::endl;
             return false;
         }
         
         // Check type compatibility
-        for (size_t i = 0; i < argTypes.size(); i++) {
-            std::cout << "[DEBUG] Checking parameter " << i << ": expected " 
-                      << funcInfo.paramTypes[i] << ", got " << argTypes[i] << std::endl;
-            
+        for (size_t i = 0; i < argTypes.size(); i++) {            
             if (funcInfo.paramTypes[i] != argTypes[i]) {
                 // No implicit conversions allowed for strict type checking
-                std::cout << "[DEBUG] Type mismatch for parameter " << i << std::endl;
+
                 return false;
             }
         }
-        std::cout << "[DEBUG] Function " << name << " type check passed" << std::endl;
+
         return true;
     }
     
@@ -136,7 +171,7 @@ bool Context::checkFunctionCall(const std::string& name, const std::vector<std::
         return true;
     }
     
-    std::cout << "[DEBUG] Function " << name << " not found in typed functions" << std::endl;
+
     return false;
 }
 
@@ -228,7 +263,7 @@ bool Context::addType(const std::string& name, llvm::StructType* type) {
 }
 
 llvm::StructType* Context::getType(const std::string& name) {
-    std::cout << "[DEBUG] Context::getType called for '" << name << "' on context " << this << std::endl;
+
     
     // Add null check for this pointer
     if (this == nullptr) {
@@ -239,7 +274,7 @@ llvm::StructType* Context::getType(const std::string& name) {
     // First check current context
     auto it = types.find(name);
     if (it != types.end()) {
-        std::cout << "[DEBUG] Found type '" << name << "' in current context" << std::endl;
+
         return it->second;
     }
     
@@ -248,7 +283,7 @@ llvm::StructType* Context::getType(const std::string& name) {
     const int MAX_RECURSION_DEPTH = 10;
     
     if (parent && recursionDepth < MAX_RECURSION_DEPTH) {
-        std::cout << "[DEBUG] Type '" << name << "' not found in current context, checking parent" << std::endl;
+
         recursionDepth++;
         llvm::StructType* result = parent->getType(name);
         recursionDepth--;
@@ -257,7 +292,7 @@ llvm::StructType* Context::getType(const std::string& name) {
         std::cerr << "[ERROR] Maximum recursion depth reached in context chain for type '" << name << "'" << std::endl;
         return nullptr;
     } else {
-        std::cout << "[DEBUG] Type '" << name << "' not found and no parent context" << std::endl;
+
         return nullptr;
     }
 }

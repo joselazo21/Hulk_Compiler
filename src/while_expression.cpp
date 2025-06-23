@@ -132,7 +132,7 @@ llvm::Value* WhileExpression::codegen(CodeGenerator& generator) {
         builder->CreateStore(convertedValue, lastValuePtr);
     } else {
         // For other type mismatches, try to store the value directly or convert appropriately
-        std::cout << "[DEBUG] WhileExpression: Type mismatch - bodyValue type: ";
+
         bodyValue->getType()->print(llvm::errs());
         std::cout << ", expected type: ";
         valueType->print(llvm::errs());

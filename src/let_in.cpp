@@ -110,6 +110,13 @@ void LetIn::printNode(int depth) {
 
 bool LetIn::Validate(IContext* context) {
     IContext* letContext = context->createChildContext();
+    
+    // Propagate the current type to the child context
+    std::string currentType = context->getCurrentType();
+    if (!currentType.empty()) {
+        letContext->setCurrentType(currentType);
+    }
+    
     bool hasErrors = false;
 
     // Check which declaration format to use
@@ -133,13 +140,19 @@ bool LetIn::Validate(IContext* context) {
             if (dynamic_cast<Number*>(binding.expr)) {
                 actualType = llvm::Type::getFloatTy(*llvmCtx);
                 actualTypeName = "Number";
-                std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is Number literal" << std::endl;
+
             }
             // Check if it's a string literal
             else if (dynamic_cast<StringLiteral*>(binding.expr)) {
                 actualType = llvm::Type::getInt8PtrTy(*llvmCtx);
                 actualTypeName = "String";
-                std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is String literal" << std::endl;
+
+            }
+            // Check if it's a boolean literal
+            else if (dynamic_cast<Boolean*>(binding.expr)) {
+                actualType = llvm::Type::getInt1Ty(*llvmCtx);
+                actualTypeName = "Boolean";
+
             }
             // Check if it's a new expression
             else if (auto* newExpr = dynamic_cast<NewExpression*>(binding.expr)) {
@@ -149,11 +162,11 @@ bool LetIn::Validate(IContext* context) {
                     // During validation, we may not have the actual struct type yet, but we know the type exists
                     actualType = llvm::Type::getFloatTy(*llvmCtx); // Placeholder type for validation
                     actualTypeName = typeName;
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is NewExpression of type " << typeName << std::endl;
+
                 } else {
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = "Number";
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is NewExpression but type not found, defaulting to Number" << std::endl;
+
                 }
             }
             // Check if it's an if expression
@@ -186,27 +199,27 @@ bool LetIn::Validate(IContext* context) {
                     elseTypeName = "Number"; // Default for other expressions
                 }
                 
-                std::cout << "[DEBUG] LetIn::Validate - IfExpression then type: " << thenTypeName << ", else type: " << elseTypeName << std::endl;
+
                 
                 // Find common base type
                 std::string commonType = findCommonBaseType(thenTypeName, elseTypeName, letContext);
                 
-                std::cout << "[DEBUG] LetIn::Validate - Common type found: " << commonType << std::endl;
+
                 
                 if (!commonType.empty() && commonType != "Object") {
                     // Use the common type
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = commonType;
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression with common type " << commonType << std::endl;
+
                 } else if (commonType == "Object") {
                     // If the only common type is Object, use it
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = "Object";
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression with Object as common type" << std::endl;
+
                 } else {
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = "Number";
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is IfExpression but no common type found, defaulting to Number" << std::endl;
+
                 }
             }
             // Check if it's an as expression (type casting)
@@ -217,37 +230,132 @@ bool LetIn::Validate(IContext* context) {
                     // During validation, use placeholder type but keep the correct type name
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = targetTypeName;
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is AsExpression with target type " << targetTypeName << std::endl;
+
                 } else {
                     // Even if struct type is not found, we can still use the target type name
                     actualType = llvm::Type::getFloatTy(*llvmCtx);
                     actualTypeName = targetTypeName;
-                    std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is AsExpression but target type not found, using type name " << targetTypeName << std::endl;
+
+                }
+            }
+            // Check if it's a method call
+            else if (auto* methodCall = dynamic_cast<MethodCall*>(binding.expr)) {
+                std::string methodName = methodCall->getMethodName();
+                
+                // Get the object's type to determine the method return type
+                std::string objectTypeName;
+                
+                // Handle Variable objects (e.g., obj.method())
+                if (auto variable = dynamic_cast<Variable*>(methodCall->getObject())) {
+                    std::string objectName = variable->getName();
+                    objectTypeName = letContext->getVariableTypeName(objectName);
+                }
+                // Handle SelfExpression objects (e.g., self.method())
+                else if (dynamic_cast<SelfExpression*>(methodCall->getObject())) {
+                    // Get the current type being processed from context
+                    objectTypeName = letContext->getCurrentType();
+                }
+                
+                // If we have a type name, look up the method return type
+                if (!objectTypeName.empty()) {
+
+                    TypeDefinition* typeDef = letContext->getTypeDefinition(objectTypeName);
+                    if (typeDef) {
+
+                        // Check typed methods first
+                        if (typeDef->getUseTypedMethods()) {
+                            const auto& typedMethods = typeDef->getTypedMethods();
+
+                            for (const auto& method : typedMethods) {
+
+                                if (method.first == methodName) {
+                                    const std::string& returnTypeAnnotation = method.second.returnType;
+
+                                    if (!returnTypeAnnotation.empty()) {
+                                        actualTypeName = returnTypeAnnotation;
+                                        if (returnTypeAnnotation == "String") {
+                                            actualType = llvm::Type::getInt8PtrTy(*llvmCtx);
+                                        } else if (returnTypeAnnotation == "Number") {
+                                            actualType = llvm::Type::getFloatTy(*llvmCtx);
+                                        } else if (returnTypeAnnotation == "Boolean") {
+                                            actualType = llvm::Type::getInt1Ty(*llvmCtx);
+                                        } else {
+                                            // For user-defined types, use placeholder
+                                            actualType = llvm::Type::getFloatTy(*llvmCtx);
+                                        }
+
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // If not found in typed methods or no return type annotation, default to Number
+                        if (actualTypeName.empty()) {
+                            actualType = llvm::Type::getFloatTy(*llvmCtx);
+                            actualTypeName = "Number";
+
+                        }
+                    } else {
+                        actualType = llvm::Type::getFloatTy(*llvmCtx);
+                        actualTypeName = "Number";
+
+                    }
+                } else {
+                    actualType = llvm::Type::getFloatTy(*llvmCtx);
+                    actualTypeName = "Number";
+
+                }
+            }
+            // Check if it's a function call
+            else if (auto* funcCall = dynamic_cast<FunctionCall*>(binding.expr)) {
+                std::string funcName = funcCall->getFunctionName();
+                
+                // Get the function return type from context
+                std::string returnTypeName = letContext->getFunctionReturnType(funcName);
+                if (!returnTypeName.empty()) {
+                    actualTypeName = returnTypeName;
+                    if (returnTypeName == "String") {
+                        actualType = llvm::Type::getInt8PtrTy(*llvmCtx);
+                    } else if (returnTypeName == "Number") {
+                        actualType = llvm::Type::getFloatTy(*llvmCtx);
+                    } else if (returnTypeName == "Boolean") {
+                        actualType = llvm::Type::getInt1Ty(*llvmCtx);
+                    } else {
+                        // For user-defined types, use placeholder type but keep the correct type name
+                        actualType = llvm::Type::getFloatTy(*llvmCtx);
+                    }
+                    std::cout << "[DEBUG] LetIn::Validate - Function call '" << funcName << "' returns type '" << returnTypeName << "'" << std::endl;
+                } else {
+                    // Default to Number if function return type not found
+                    actualType = llvm::Type::getFloatTy(*llvmCtx);
+                    actualTypeName = "Number";
+                    std::cout << "[DEBUG] LetIn::Validate - Function call '" << funcName << "' return type not found, defaulting to Number" << std::endl;
                 }
             }
             // Default to Number for other expressions
             else {
                 actualType = llvm::Type::getFloatTy(*llvmCtx);
                 actualTypeName = "Number";
-                std::cout << "[DEBUG] LetIn::Validate - Variable " << binding.name << " is other expression, defaulting to Number type" << std::endl;
+
             }
             
             // Check type annotation if present
             if (!binding.typeAnnotation.empty()) {
-                std::cout << "[DEBUG] LetIn::Validate - Checking type annotation: " << binding.typeAnnotation << " vs actual: " << actualTypeName << std::endl;
+
                 
                 // Check for type compatibility (exact match or inheritance)
                 bool isCompatible = false;
                 if (binding.typeAnnotation == actualTypeName) {
                     // Exact type match
                     isCompatible = true;
-                    std::cout << "[DEBUG] LetIn::Validate - Exact type match" << std::endl;
+
                 } else if (letContext->isSubtypeOf(actualTypeName, binding.typeAnnotation)) {
                     // actualTypeName is a subtype of the declared type (inheritance)
                     isCompatible = true;
-                    std::cout << "[DEBUG] LetIn::Validate - " << actualTypeName << " is a subtype of " << binding.typeAnnotation << std::endl;
+
                 } else {
-                    std::cout << "[DEBUG] LetIn::Validate - Types are not compatible" << std::endl;
+
                 }
                 
                 if (!isCompatible) {
@@ -255,15 +363,16 @@ bool LetIn::Validate(IContext* context) {
                                  binding.typeAnnotation + " but assigned " + actualTypeName, location);
                     hasErrors = true;
                 }
-                std::cout << "[DEBUG] LetIn::Validate - Type annotation is compatible with actual type" << std::endl;
+
             }
             
             if (!letContext->addVariable(binding.name, actualType, actualTypeName)) {
                 SEMANTIC_ERROR("Variable " + binding.name + " already defined in this scope", location);
                 hasErrors = true;
             }
+            std::cout << "[DEBUG] LetIn::Validate - Added variable '" << binding.name << "' with type '" << actualTypeName << "'" << std::endl;
             
-            std::cout << "[DEBUG] LetIn::Validate - Added variable " << binding.name << " to context with type " << actualTypeName << std::endl;
+
         }
 
         // Now validate each declaration expression using the extended context
@@ -291,17 +400,17 @@ bool LetIn::Validate(IContext* context) {
             // Check if it's a number literal
             if (dynamic_cast<Number*>(decl.second)) {
                 varType = llvm::Type::getFloatTy(*llvmCtx); // Number type
-                std::cout << "[DEBUG] LetIn::Validate - Variable " << decl.first << " is Number literal, setting Float type" << std::endl;
+
             }
             // Check if it's a string literal
             else if (dynamic_cast<StringLiteral*>(decl.second)) {
                 varType = llvm::Type::getInt8PtrTy(*llvmCtx); // String type
-                std::cout << "[DEBUG] LetIn::Validate - Variable " << decl.first << " is String literal, setting Pointer type" << std::endl;
+
             }
             // Default to Number for other expressions
             else {
                 varType = llvm::Type::getFloatTy(*llvmCtx);
-                std::cout << "[DEBUG] LetIn::Validate - Variable " << decl.first << " is other expression, defaulting to Float type" << std::endl;
+
             }
             
             if (!letContext->addVariable(decl.first, varType)) {
@@ -309,7 +418,7 @@ bool LetIn::Validate(IContext* context) {
                 hasErrors = true;
             }
             
-            std::cout << "[DEBUG] LetIn::Validate - Added variable " << decl.first << " to context with type" << std::endl;
+
         }
 
         // Now validate each declaration expression using the extended context
@@ -324,7 +433,7 @@ bool LetIn::Validate(IContext* context) {
     // Validate the 'in' expression using the extended context
     // This validation should continue even if there were errors in declarations
     // to catch additional semantic errors like function return type mismatches
-    std::cout << "[DEBUG] LetIn::Validate - About to validate 'in' expression with letContext: " << letContext << std::endl;
+
     bool inExprValid = true;
     if (expr) {
         inExprValid = expr->Validate(letContext);
@@ -377,18 +486,30 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             }
 
             // Set the current variable name context for vector data association
-            std::cout << "[DEBUG] LetIn::codegen - setting current variable name to: '" << varName << "'" << std::endl;
+
             generator.setCurrentLetInVariableName(varName);
             
             // Generar valor de la expresión de la declaración
             llvm::Value* val = binding.expr->codegen(generator);
         
         // Clear the current variable name context
-        std::cout << "[DEBUG] LetIn::codegen - clearing current variable name" << std::endl;
+
         generator.setCurrentLetInVariableName("");
         if (!val) {
-        std::cerr << "Warning: Failed to generate code for declaration of " << varName << ", using default value" << std::endl;
-        val = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
+            std::cerr << "Warning: Failed to generate code for declaration of " << varName << ", using default value" << std::endl;
+            
+            // Use appropriate default value based on type annotation
+            if (!binding.typeAnnotation.empty()) {
+                if (binding.typeAnnotation == "String") {
+                    val = generator.createGlobalString("");
+                } else if (binding.typeAnnotation == "Boolean") {
+                    val = llvm::ConstantInt::get(llvm::Type::getInt1Ty(generator.getContext()), 0);
+                } else {
+                    val = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
+                }
+            } else {
+                val = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
+            }
         }
 
         // Detectar si es un iterador
@@ -423,13 +544,13 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                         }
                     }
                     
-                    // If still not compatible, show debug info and error
+
                     if (val->getType() != globalType) {
-                        std::cout << "[DEBUG] Type mismatch for " << varName << std::endl;
-                        std::cout << "[DEBUG] Expected type: ";
+
+
                         globalType->print(llvm::errs());
                         std::cout << std::endl;
-                        std::cout << "[DEBUG] Actual type: ";
+
                         val->getType()->print(llvm::errs());
                         std::cout << std::endl;
                         
@@ -439,12 +560,12 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                         return nullptr;
                     }
                 } else {
-                    // Debug information to understand the type mismatch
-                    std::cout << "[DEBUG] Type mismatch for " << varName << std::endl;
-                    std::cout << "[DEBUG] Expected type: ";
+
+
+
                     globalType->print(llvm::errs());
                     std::cout << std::endl;
-                    std::cout << "[DEBUG] Actual type: ";
+
                     val->getType()->print(llvm::errs());
                     std::cout << std::endl;
                     
@@ -457,61 +578,61 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             generator.getBuilder()->CreateStore(val, globalIter);
             
             // 3. Check if this is a vector expression and transfer vector data
-            std::cout << "[DEBUG] Checking if declaration is a vector expression for " << varName << std::endl;
+
             if (auto* vectorExpr = dynamic_cast<VectorExpression*>(binding.expr)) {
-                std::cout << "[DEBUG] Found vector expression, isGenerator: " << vectorExpr->getIsGenerator() << std::endl;
+
                 if (!vectorExpr->getIsGenerator()) {
                     // Extract vector values and store them for the iterator
                     std::vector<double> vectorValues;
-                    std::cout << "[DEBUG] Extracting " << vectorExpr->getElements().size() << " elements" << std::endl;
+
                     for (auto* elem : vectorExpr->getElements()) {
                         if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
                             double value = numberExpr->getValue();
-                            std::cout << "[DEBUG] Found number element: " << value << std::endl;
+
                             vectorValues.push_back(value);
                         } else {
-                            std::cout << "[DEBUG] Element is not a Number" << std::endl;
+
                         }
                     }
                     if (!vectorValues.empty()) {
-                        std::cout << "[DEBUG] Storing vector data for " << varName << std::endl;
+
                         generator.storeVectorDataForIterator(varName, vectorValues);
                     } else {
-                        std::cout << "[DEBUG] No vector values to store" << std::endl;
+
                     }
                 }
             } else if (auto* varExpr = dynamic_cast<Variable*>(binding.expr)) {
                 // Check if this iterator is being assigned a variable that has vector data
                 std::string sourceVarName = varExpr->getName();
-                std::cout << "[DEBUG] Iterator " << varName << " is being assigned variable " << sourceVarName << std::endl;
+
                 
                 // Try to find vector data for the source variable
                 if (generator.hasVectorDataForIterator(sourceVarName)) {
                     std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
-                    std::cout << "[DEBUG] Found vector data for source variable " << sourceVarName << ", transferring to " << varName << std::endl;
-                    std::cout << "[DEBUG] Vector data values: ";
+
+
                     for (double val : sourceVectorData) {
                         std::cout << val << " ";
                     }
                     std::cout << std::endl;
                     generator.storeVectorDataForIterator(varName, sourceVectorData);
                 } else {
-                    std::cout << "[DEBUG] No vector data found for source variable " << sourceVarName << std::endl;
+
                     
                     // Try to find the actual variable and check if it has vector data stored
                     llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
                     if (sourceVar) {
-                        std::cout << "[DEBUG] Found source variable " << sourceVarName << ", checking for associated vector data" << std::endl;
+
                         
                         // Check if there's vector data stored for any key that might match
                         // Look for vector data that was stored when the variable was created
                         auto vectorDataMap = generator.getAllVectorData();
                         for (const auto& pair : vectorDataMap) {
-                            std::cout << "[DEBUG] Checking vector data key: " << pair.first << std::endl;
+
                             if (pair.first.find(sourceVarName) != std::string::npos || 
                                 pair.first == sourceVarName) {
-                                std::cout << "[DEBUG] Found matching vector data for key " << pair.first << ", transferring to " << varName << std::endl;
-                                std::cout << "[DEBUG] Vector data values: ";
+
+
                                 for (int val : pair.second) {
                                     std::cout << val << " ";
                                 }
@@ -523,7 +644,7 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                     }
                 }
             } else {
-                std::cout << "[DEBUG] Declaration is not a vector expression or variable" << std::endl;
+
             }
             
             // 4. NOW implement the iterator functions (after the global is created and value stored)
@@ -570,12 +691,19 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             
             // Store the semantic type name if we have one
             if (!semanticTypeName.empty()) {
+                // Store in both the current context and the old (global) context
                 generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
-                std::cout << "[DEBUG] LetIn::codegen - Stored semantic type name '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
+                if (oldContext) {
+                    oldContext->setVariableTypeName(varName, semanticTypeName);
+                }
+                std::cout << "[DEBUG] LetIn::codegen - Stored semantic type '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
             } else if (!binding.typeAnnotation.empty()) {
                 // Use the type annotation if no semantic type was inferred
                 generator.getContextObject()->setVariableTypeName(varName, binding.typeAnnotation);
-                std::cout << "[DEBUG] LetIn::codegen - Used type annotation '" << binding.typeAnnotation << "' for variable '" << varName << "'" << std::endl;
+                if (oldContext) {
+                    oldContext->setVariableTypeName(varName, binding.typeAnnotation);
+                }
+                std::cout << "[DEBUG] LetIn::codegen - Stored type annotation '" << binding.typeAnnotation << "' for variable '" << varName << "'" << std::endl;
             }
         }
     }
@@ -585,23 +713,24 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             const std::string& varName = decl.first;
             declaredVars.push_back(varName);
             
+            std::cout << "[DEBUG] LetIn::codegen (legacy) - Processing variable '" << varName << "'" << std::endl;
+            
             llvm::Value* oldVal = generator.getNamedValue(varName);
             if (oldVal) {
                 oldBindings[varName] = oldVal;
             }
 
             // Set the current variable name context for vector data association
-            std::cout << "[DEBUG] LetIn::codegen - setting current variable name to: '" << varName << "'" << std::endl;
             generator.setCurrentLetInVariableName(varName);
             
             // Generar valor de la expresión de la declaración
             llvm::Value* val = decl.second->codegen(generator);
             
             // Clear the current variable name context
-            std::cout << "[DEBUG] LetIn::codegen - clearing current variable name" << std::endl;
             generator.setCurrentLetInVariableName("");
             if (!val) {
                 std::cerr << "Warning: Failed to generate code for declaration of " << varName << ", using default value" << std::endl;
+                // For legacy declarations, default to float since we don't have type annotations
                 val = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
             }
 
@@ -637,13 +766,13 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                             }
                         }
                         
-                        // If still not compatible, show debug info and error
+
                         if (val->getType() != globalType) {
-                            std::cout << "[DEBUG] Type mismatch for " << varName << std::endl;
-                            std::cout << "[DEBUG] Expected type: ";
+
+
                             globalType->print(llvm::errs());
                             std::cout << std::endl;
-                            std::cout << "[DEBUG] Actual type: ";
+
                             val->getType()->print(llvm::errs());
                             std::cout << std::endl;
                             
@@ -653,12 +782,12 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                             return nullptr;
                         }
                     } else {
-                        // Debug information to understand the type mismatch
-                        std::cout << "[DEBUG] Type mismatch for " << varName << std::endl;
-                        std::cout << "[DEBUG] Expected type: ";
+
+
+
                         globalType->print(llvm::errs());
                         std::cout << std::endl;
-                        std::cout << "[DEBUG] Actual type: ";
+
                         val->getType()->print(llvm::errs());
                         std::cout << std::endl;
                         
@@ -671,61 +800,61 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                 generator.getBuilder()->CreateStore(val, globalIter);
                 
                 // 3. Check if this is a vector expression and transfer vector data
-                std::cout << "[DEBUG] Checking if declaration is a vector expression for " << varName << std::endl;
+
                 if (auto* vectorExpr = dynamic_cast<VectorExpression*>(decl.second)) {
-                    std::cout << "[DEBUG] Found vector expression, isGenerator: " << vectorExpr->getIsGenerator() << std::endl;
+
                     if (!vectorExpr->getIsGenerator()) {
                         // Extract vector values and store them for the iterator
                         std::vector<double> vectorValues;
-                        std::cout << "[DEBUG] Extracting " << vectorExpr->getElements().size() << " elements" << std::endl;
+
                         for (auto* elem : vectorExpr->getElements()) {
                             if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
                                 double value = numberExpr->getValue();
-                                std::cout << "[DEBUG] Found number element: " << value << std::endl;
+
                                 vectorValues.push_back(value);
                             } else {
-                                std::cout << "[DEBUG] Element is not a Number" << std::endl;
+
                             }
                         }
                         if (!vectorValues.empty()) {
-                            std::cout << "[DEBUG] Storing vector data for " << varName << std::endl;
+
                             generator.storeVectorDataForIterator(varName, vectorValues);
                         } else {
-                            std::cout << "[DEBUG] No vector values to store" << std::endl;
+
                         }
                     }
                 } else if (auto* varExpr = dynamic_cast<Variable*>(decl.second)) {
                     // Check if this iterator is being assigned a variable that has vector data
                     std::string sourceVarName = varExpr->getName();
-                    std::cout << "[DEBUG] Iterator " << varName << " is being assigned variable " << sourceVarName << std::endl;
+
                     
                     // Try to find vector data for the source variable
                     if (generator.hasVectorDataForIterator(sourceVarName)) {
                         std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
-                        std::cout << "[DEBUG] Found vector data for source variable " << sourceVarName << ", transferring to " << varName << std::endl;
-                        std::cout << "[DEBUG] Vector data values: ";
+
+
                         for (double val : sourceVectorData) {
                             std::cout << val << " ";
                         }
                         std::cout << std::endl;
                         generator.storeVectorDataForIterator(varName, sourceVectorData);
                     } else {
-                        std::cout << "[DEBUG] No vector data found for source variable " << sourceVarName << std::endl;
+
                         
                         // Try to find the actual variable and check if it has vector data stored
                         llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
                         if (sourceVar) {
-                            std::cout << "[DEBUG] Found source variable " << sourceVarName << ", checking for associated vector data" << std::endl;
+
                             
                             // Check if there's vector data stored for any key that might match
                             // Look for vector data that was stored when the variable was created
                             auto vectorDataMap = generator.getAllVectorData();
                             for (const auto& pair : vectorDataMap) {
-                                std::cout << "[DEBUG] Checking vector data key: " << pair.first << std::endl;
+
                                 if (pair.first.find(sourceVarName) != std::string::npos || 
                                     pair.first == sourceVarName) {
-                                    std::cout << "[DEBUG] Found matching vector data for key " << pair.first << ", transferring to " << varName << std::endl;
-                                    std::cout << "[DEBUG] Vector data values: ";
+
+
                                     for (int val : pair.second) {
                                         std::cout << val << " ";
                                     }
@@ -737,7 +866,7 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                         }
                     }
                 } else {
-                    std::cout << "[DEBUG] Declaration is not a vector expression or variable" << std::endl;
+
                 }
                 
                 // 4. NOW implement the iterator functions (after the global is created and value stored)
@@ -784,8 +913,12 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                 
                 // Store the semantic type name if we have one
                 if (!semanticTypeName.empty()) {
+                    // Store in both the current context and the old (global) context
                     generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
-                    std::cout << "[DEBUG] LetIn::codegen - Stored semantic type name '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
+                    if (oldContext) {
+                        oldContext->setVariableTypeName(varName, semanticTypeName);
+                    }
+                    std::cout << "[DEBUG] LetIn::codegen - Stored semantic type '" << semanticTypeName << "' for variable '" << varName << "' (legacy)" << std::endl;
                 }
             }
         }

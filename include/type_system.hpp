@@ -170,9 +170,10 @@ public:
 class TypeRegistry {
 private:
     std::map<std::string, std::unique_ptr<Type>> types;
+    class IContext* context; // Store context reference for dynamic type creation
     
 public:
-    TypeRegistry() {
+    TypeRegistry() : context(nullptr) {
         // Register built-in types
         types["Number"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER);
         types["String"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::STRING);
@@ -180,10 +181,15 @@ public:
         types["Void"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::VOID);
     }
     
-    const Type* getType(const std::string& name) const {
-        auto it = types.find(name);
-        return it != types.end() ? it->second.get() : nullptr;
+    TypeRegistry(class IContext* ctx) : context(ctx) {
+        // Register built-in types
+        types["Number"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::NUMBER);
+        types["String"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::STRING);
+        types["Boolean"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::BOOLEAN);
+        types["Void"] = std::make_unique<BuiltinTypeImpl>(BuiltinType::VOID);
     }
+    
+    const Type* getType(const std::string& name) const;
     
     void registerType(const std::string& name, std::unique_ptr<Type> type) {
         types[name] = std::move(type);

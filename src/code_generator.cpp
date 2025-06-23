@@ -399,8 +399,8 @@ llvm::Value* CodeGenerator::generatePrintCall(llvm::Value* value) {
         value->getType()->getPointerElementType()->isIntegerTy(8)) {
         std::cout << "Printing string value\n";
         
-        // Debug: Check if the string pointer is valid
-        std::cout << "[DEBUG] String pointer value: ";
+
+
         value->print(llvm::errs());
         std::cout << std::endl;
         
@@ -424,8 +424,8 @@ llvm::Value* CodeGenerator::generatePrintCall(llvm::Value* value) {
     } else if (value->getType()->isFloatTy()) {
         std::cout << "Printing float value\n";
         
-        // Debug: Check the float value
-        std::cout << "[DEBUG] Float value: ";
+
+
         value->print(llvm::errs());
         std::cout << std::endl;
         
@@ -449,10 +449,10 @@ llvm::Value* CodeGenerator::generatePrintCall(llvm::Value* value) {
     llvm::Function* printfFunc = TheModule->getFunction("printf");
     std::cout << "Calling printf function\n";
     
-    // Debug: Print the arguments being passed to printf
-    std::cout << "[DEBUG] Printf arguments:" << std::endl;
+
+
     for (size_t i = 0; i < printfArgs.size(); ++i) {
-        std::cout << "[DEBUG] Arg " << i << ": ";
+
         printfArgs[i]->print(llvm::errs());
         std::cout << std::endl;
     }
@@ -614,21 +614,21 @@ void CodeGenerator::popScope() {
 }
 
 IContext* CodeGenerator::currentContext() {
-    std::cout << "[DEBUG] CodeGenerator::currentContext() called, contextStack.size()=" << contextStack.size() << std::endl;
+
     
     // First try the stack
     if (!contextStack.empty()) {
         IContext* stackContext = contextStack.back();
-        std::cout << "[DEBUG] Returning context from stack: " << stackContext << std::endl;
+
         return stackContext;
     }
     // Then try contextObject
     if (contextObject) {
-        std::cout << "[DEBUG] Returning contextObject: " << contextObject << std::endl;
+
         return contextObject;
     }
     // Finally, create a new context if needed
-    std::cout << "[DEBUG] Creating new context as fallback" << std::endl;
+
     contextObject = new Context(nullptr, TheContext);
     return contextObject;
 }
@@ -714,8 +714,23 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
         llvm::BasicBlock* bb = llvm::BasicBlock::Create(*TheContext, "entry", nextFunc);
         llvm::IRBuilder<> B(bb);
 
-        // Cargamos _siempre_ de rangePtrGlobal
+        // Add null pointer check first
         llvm::Value* loaded = B.CreateLoad(ptrType, rangePtrGlobal, "range.ptr");
+        llvm::Value* isNull = B.CreateICmpEQ(loaded, 
+            llvm::ConstantPointerNull::get(ptrType), "is.null");
+        
+        // Create blocks for null check
+        llvm::BasicBlock* nullBB = llvm::BasicBlock::Create(*TheContext, "null", nextFunc);
+        llvm::BasicBlock* validBB = llvm::BasicBlock::Create(*TheContext, "valid", nextFunc);
+        
+        B.CreateCondBr(isNull, nullBB, validBB);
+        
+        // If null, return 0 (no more iterations)
+        B.SetInsertPoint(nullBB);
+        B.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt32Ty(*TheContext), 0));
+        
+        // If valid, proceed with normal logic
+        B.SetInsertPoint(validBB);
         llvm::Value* curPtr = B.CreateStructGEP(rangeType, loaded, 0, "current.ptr");
         llvm::Value* curVal = B.CreateLoad(llvm::Type::getInt32Ty(*TheContext), curPtr, "current");
         llvm::Value* endPtr = B.CreateStructGEP(rangeType, loaded, 1, "end.ptr");
@@ -757,19 +772,37 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
         llvm::BasicBlock* bb = llvm::BasicBlock::Create(*TheContext, "entry", currentFunc);
         llvm::IRBuilder<> B(bb);
 
+        // Add null pointer check first
+        llvm::Value* loaded = B.CreateLoad(ptrType, rangePtrGlobal, "range.ptr");
+        llvm::Value* isNull = B.CreateICmpEQ(loaded, 
+            llvm::ConstantPointerNull::get(ptrType), "is.null");
+        
+        // Create blocks for null check
+        llvm::BasicBlock* nullBB = llvm::BasicBlock::Create(*TheContext, "null", currentFunc);
+        llvm::BasicBlock* validBB = llvm::BasicBlock::Create(*TheContext, "valid", currentFunc);
+        
+        B.CreateCondBr(isNull, nullBB, validBB);
+        
+        // If null, return 0.0
+        B.SetInsertPoint(nullBB);
+        B.CreateRet(llvm::ConstantFP::get(llvm::Type::getFloatTy(*TheContext), 0.0));
+        
+        // If valid, proceed with normal logic
+        B.SetInsertPoint(validBB);
+
         // Buscar el array global con los valores del vector
         std::string arrayName = "__vector_data_" + iterName;
         llvm::GlobalVariable* vectorArray = TheModule->getGlobalVariable(arrayName);
         
         // If not found with iterator name, search through all existing vector data arrays
         if (!vectorArray) {
-            std::cout << "[DEBUG] Array " << arrayName << " not found, searching all globals..." << std::endl;
-            // List all globals to debug
+
+
             for (auto &G : TheModule->globals()) {
                 std::string globalName = G.getName().str();
-                std::cout << "[DEBUG] Found global: " << globalName << std::endl;
+
                 if (globalName.find("__vector_data_") == 0) {
-                    std::cout << "[DEBUG] Found vector data global: " << globalName << std::endl;
+
                     // Use the first vector data array we find
                     vectorArray = &G;
                     arrayName = globalName;
@@ -779,10 +812,9 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
         }
         
         if (vectorArray) {
-            std::cout << "[DEBUG] Found vector data array: " << arrayName << std::endl;
+
             
             // Load the current index from the range struct
-            llvm::Value* loaded = B.CreateLoad(ptrType, rangePtrGlobal, "range.ptr");
             llvm::Value* curPtr = B.CreateStructGEP(rangeType, loaded, 0, "current.ptr");
             llvm::Value* valFromStruct = B.CreateLoad(llvm::Type::getInt32Ty(*TheContext), curPtr, "val.from.struct");
             
@@ -801,20 +833,20 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
             int arraySize = 0;
             if (auto* arrType = llvm::dyn_cast<llvm::ArrayType>(arrayType)) {
                 arraySize = arrType->getNumElements();
-                std::cout << "[DEBUG] Array size determined from type: " << arraySize << std::endl;
+
             } else {
                 // Fallback: try to get size from stored vector data
                 std::vector<double> vectorValues;
                 if (hasVectorDataForIterator(iterName)) {
                     vectorValues = getVectorDataForIterator(iterName);
                     arraySize = vectorValues.size();
-                    std::cout << "[DEBUG] Array size from stored vector data: " << arraySize << std::endl;
+
                 } else {
                     // Last resort: search through all vector data
                     for (const auto& pair : getAllVectorData()) {
                         vectorValues = pair.second;
                         arraySize = vectorValues.size();
-                        std::cout << "[DEBUG] Array size from first available vector data: " << arraySize << std::endl;
+
                         break;
                     }
                 }
@@ -853,7 +885,7 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
             // Convert double to float for return type consistency
             llvm::Value* floatValue = B.CreateFPTrunc(elementValue, llvm::Type::getFloatTy(*TheContext), "double_to_float");
             
-            std::cout << "[DEBUG] Accessing vector element at index: ";
+
             actualCurrentVal->print(llvm::errs());
             std::cout << std::endl;
             
@@ -861,7 +893,6 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
         } else {
             // No vector data array found, fall back to range-based iteration
             // Load the current index from the range struct
-            llvm::Value* loaded = B.CreateLoad(ptrType, rangePtrGlobal, "range.ptr");
             llvm::Value* curPtr = B.CreateStructGEP(rangeType, loaded, 0, "current.ptr");
             llvm::Value* valFromStruct = B.CreateLoad(llvm::Type::getInt32Ty(*TheContext), curPtr, "val.from.struct");
             
@@ -873,7 +904,7 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
             // Convert integer to float for return type consistency
             llvm::Value* floatVal = B.CreateSIToFP(actualCurrentVal, llvm::Type::getFloatTy(*TheContext), "int_to_float");
                 
-            std::cout << "[DEBUG] No vector data array found, returning index value" << std::endl;
+
             B.CreateRet(floatVal);
         }
     }
@@ -881,7 +912,7 @@ void CodeGenerator::implementIteratorFunctions(const std::string& iterName) {
 
 // Method to store vector data for iteration
 void CodeGenerator::storeVectorDataForIterator(const std::string& iterName, const std::vector<double>& values) {
-    std::cout << "[DEBUG] Storing vector data for iterator: " << iterName << " with values: ";
+
     for (double val : values) {
         std::cout << val << " ";
     }
@@ -917,7 +948,7 @@ void CodeGenerator::storeVectorDataForIterator(const std::string& iterName, cons
             arrayName
         );
         
-        std::cout << "[DEBUG] Created global array for vector data: " << arrayName << std::endl;
+
     }
 }
 
@@ -966,33 +997,25 @@ llvm::Function* CodeGenerator::declareRangeFunction() {
 
 llvm::GlobalVariable* CodeGenerator::getIteratorGlobalVariable(const std::string& iterName) {
     std::string globalName = getIteratorGlobalName(iterName);
-    
-    std::cout << "[DEBUG] getIteratorGlobalVariable called for: " << iterName 
-              << ", globalName: " << globalName << std::endl;
-    
 
     static std::map<std::string, llvm::GlobalVariable*> iteratorGlobals;
     
     // First check if it's in our map
     auto it = iteratorGlobals.find(globalName);
     if (it != iteratorGlobals.end()) {
-        std::cout << "[DEBUG] Found existing global in map: " << it->second 
-                  << ", name: " << it->first << std::endl;
         return it->second;
     }
     
     // Then check if it already exists in the module
     llvm::GlobalVariable* existingGlobal = TheModule->getGlobalVariable(globalName);
     if (existingGlobal) {
-        std::cout << "[DEBUG] Found existing global in module: " << existingGlobal 
-                  << ", name in module: " << existingGlobal->getName().str() << std::endl;
         // Store it in our map for future lookups
         iteratorGlobals[globalName] = existingGlobal;
         return existingGlobal;
     }
     
-    // List all existing globals for debugging
-    std::cout << "[DEBUG] Existing globals in module:" << std::endl;
+
+
     for (auto &G : TheModule->globals()) {
         std::cout << "  - " << G.getName().str() << " at " << &G << std::endl;
     }
@@ -1009,9 +1032,6 @@ llvm::GlobalVariable* CodeGenerator::getIteratorGlobalVariable(const std::string
         llvm::ConstantPointerNull::get(rangePtrType),
         globalName
     );
-    
-    std::cout << "[DEBUG] Created new global: " << newGlobal 
-              << ", assigned name: " << newGlobal->getName().str() << std::endl;
     
     // Store the new global in our map
     iteratorGlobals[globalName] = newGlobal;
@@ -1074,8 +1094,8 @@ void CodeGenerator::declareAndImplementRangeSizeMethod() {
     
     llvm::Value* size = endVal;
     
-    // Debug print to verify the size
-    std::cout << "[DEBUG] range.size() returning size from end value" << std::endl;
+
+
     
     sizeBuilder.CreateRet(size);
     
