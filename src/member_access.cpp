@@ -100,12 +100,6 @@ llvm::Value* MemberAccess::codegen(CodeGenerator& generator) {
         "field." + member
     );
     
-    // Check if we're in an assignment context
-    // We'll use a heuristic: if this is part of an AssignmentExpression, return the pointer
-    // Otherwise, load and return the value
-    
-    // For now, load the value by default since most uses are for reading
-    // Assignment expressions will handle the pointer case separately
     llvm::Type* fieldType = fieldPtr->getType()->getPointerElementType();
     llvm::Value* fieldValue = builder->CreateLoad(fieldType, fieldPtr, "load." + member);
     

@@ -82,6 +82,9 @@ public:
     
     // Method to get the last expression for return type checking
     Expression* getLastExpression() const;
+    
+    // Method to get the last statement for type checking (including IfStatements)
+    Statement* getLastStatement() const;
 };
 
 // ExpressionStatement class
@@ -453,6 +456,11 @@ public:
     bool Validate(IContext* context) override;
     llvm::Value* codegen(CodeGenerator& generator) override;
     ~IfStatement();
+    
+    // Getter methods for type checking
+    Expression* getCondition() const { return condition; }
+    BlockStatement* getThenBranch() const { return thenBranch; }
+    BlockStatement* getElseBranch() const { return elseBranch; }
 };
 
 // WhileStatement class
@@ -582,6 +590,10 @@ public:
     
     // Getter for type checking
     Expression* getInExpression() const { return expr; }
+
+private:
+    void codegen_typed(CodeGenerator& generator, IContext* letContext, std::map<std::string, llvm::Value*>& oldBindings, std::vector<std::string>& declaredVars);
+    void codegen_untyped(CodeGenerator& generator, IContext* letContext, std::map<std::string, llvm::Value*>& oldBindings, std::vector<std::string>& declaredVars);
 };
 
 // BlockExpression class

@@ -17,7 +17,7 @@ set(CMAKE_BUILD_TYPE Debug)
 
 # Find required packages
 find_package(BISON REQUIRED)
-# Note: We no longer use FLEX, we use our custom lexer generator
+find_package(FLEX REQUIRED)
 
 # Configuración de LLVM
 find_package(LLVM 14.0 REQUIRED CONFIG)
@@ -157,6 +157,8 @@ target_link_libraries(main_flex_bison PRIVATE
     ${llvm_libs}
     ${LLVM_LIBRARIES}
     runtime_iter
+    runtime_print
+    runtime_support
 )
 
 # Configuraciones adicionales

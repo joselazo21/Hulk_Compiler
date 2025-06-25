@@ -9,11 +9,7 @@ typedef struct TypeInfo {
 } TypeInfo;
 
 // Enhanced runtime type checking with inheritance support
-int __hulk_runtime_type_check_enhanced(void* object, const char* target_type_name) {
-
-
-
-    
+int __hulk_runtime_type_check_enhanced(void* object, const char* target_type_name) { 
     if (!object || !target_type_name) {
 
         return 0;
@@ -23,9 +19,6 @@ int __hulk_runtime_type_check_enhanced(void* object, const char* target_type_nam
     TypeInfo** type_info_ptr = (TypeInfo**)object;
     TypeInfo* type_info = *type_info_ptr;
     
-
-
-    
     if (!type_info || !type_info->type_name) {
 
         return 0;
@@ -34,10 +27,7 @@ int __hulk_runtime_type_check_enhanced(void* object, const char* target_type_nam
     // Walk up the inheritance chain
     char* current_type_name = type_info->type_name;
     char* current_parent_name = type_info->parent_type_name;
-    
 
-
-    
     // Check current type
     if (strcmp(current_type_name, target_type_name) == 0) {
 

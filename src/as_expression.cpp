@@ -214,7 +214,7 @@ llvm::Value* AsExpression::codegen(CodeGenerator& generator) {
         funcBuilder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt1Ty(context), 0));
     }
     
-    // Create or get the runtime error function for failed casts
+    // Create or get the runtime error function for failed casts (declaration only)
     llvm::Function* runtimeErrorFunc = module->getFunction("__hulk_runtime_error");
     if (!runtimeErrorFunc) {
         llvm::FunctionType* errorFuncType = llvm::FunctionType::get(
@@ -228,50 +228,7 @@ llvm::Value* AsExpression::codegen(CodeGenerator& generator) {
             "__hulk_runtime_error",
             module
         );
-        
-        // Implement the function body
-        llvm::BasicBlock* entryBB = llvm::BasicBlock::Create(context, "entry", runtimeErrorFunc);
-        llvm::IRBuilder<> funcBuilder(entryBB);
-        
-        // Get function argument
-        llvm::Value* errorMsg = &*runtimeErrorFunc->arg_begin();
-        
-        // Create or get printf function
-        llvm::Function* printfFunc = module->getFunction("printf");
-        if (!printfFunc) {
-            llvm::FunctionType* printfType = llvm::FunctionType::get(
-                llvm::Type::getInt32Ty(context),
-                {llvm::Type::getInt8PtrTy(context)},
-                true // variadic
-            );
-            printfFunc = llvm::Function::Create(
-                printfType,
-                llvm::Function::ExternalLinkage,
-                "printf",
-                module
-            );
-        }
-        
-        // Create or get exit function
-        llvm::Function* exitFunc = module->getFunction("exit");
-        if (!exitFunc) {
-            llvm::FunctionType* exitType = llvm::FunctionType::get(
-                llvm::Type::getVoidTy(context),
-                {llvm::Type::getInt32Ty(context)},
-                false
-            );
-            exitFunc = llvm::Function::Create(
-                exitType,
-                llvm::Function::ExternalLinkage,
-                "exit",
-                module
-            );
-        }
-        
-        // Print error message and exit
-        funcBuilder.CreateCall(printfFunc, {errorMsg});
-        funcBuilder.CreateCall(exitFunc, {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 1)});
-        funcBuilder.CreateUnreachable();
+        // Note: Function implementation is provided by the runtime library
     }
     
     // Cast object to void* and create type name string

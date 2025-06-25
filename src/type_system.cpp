@@ -1,6 +1,7 @@
 #include "type_system.hpp"
 #include "tree.hpp"
 #include <iostream>
+#include <unordered_set>
 
 const Type* TypeRegistry::getType(const std::string& name) const {
     auto it = types.find(name);
@@ -25,6 +26,9 @@ const Type* TypeRegistry::getType(const std::string& name) const {
 
 const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     if (!expr) return nullptr;
+    
+    // Note: We removed the unsafe IfStatement cast handling here
+    // Instead, we'll handle this case differently in getLastExpression()
     
     // Number literals
     if (dynamic_cast<Number*>(expr)) {
@@ -290,14 +294,72 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     
     // If expressions
     if (auto ifExpr = dynamic_cast<IfExpression*>(expr)) {
+        std::cout << "[DEBUG] TypeChecker::inferType - Processing IfExpression" << std::endl;
+        
         // The type of an if expression is the type of its branches
-        // Both branches should have the same type
         const Type* thenType = inferType(ifExpr->thenExpr, context);
         const Type* elseType = ifExpr->elseExpr ? inferType(ifExpr->elseExpr, context) : registry.getVoidType();
         
-        if (areTypesCompatible(thenType, elseType)) {
+        std::cout << "[DEBUG] TypeChecker::inferType - IfExpression thenType: " << (thenType ? thenType->toString() : "null") << std::endl;
+        std::cout << "[DEBUG] TypeChecker::inferType - IfExpression elseType: " << (elseType ? elseType->toString() : "null") << std::endl;
+        
+        if (thenType && elseType) {
+            // If both types are exactly the same, return that type
+            if (thenType->toString() == elseType->toString()) {
+                std::cout << "[DEBUG] TypeChecker::inferType - IfExpression types are identical: " << thenType->toString() << std::endl;
+                return thenType;
+            }
+            
+            // Check if both types are user-defined types and find their common ancestor
+            if (auto thenUserType = dynamic_cast<const UserDefinedType*>(thenType)) {
+                if (auto elseUserType = dynamic_cast<const UserDefinedType*>(elseType)) {
+                    // Both are user-defined types, check inheritance
+                    std::string thenTypeName = thenUserType->getName();
+                    std::string elseTypeName = elseUserType->getName();
+                    
+                    std::cout << "[DEBUG] TypeChecker::inferType - IfExpression checking common ancestor for: " << thenTypeName << " and " << elseTypeName << std::endl;
+                    
+                    // Check if they have a common ancestor
+                    if (context) {
+                        std::string commonAncestor = findCommonAncestor(thenTypeName, elseTypeName, context);
+                        std::cout << "[DEBUG] TypeChecker::inferType - IfExpression common ancestor: " << commonAncestor << std::endl;
+                        if (!commonAncestor.empty()) {
+                            const Type* ancestorType = registry.getType(commonAncestor);
+                            if (ancestorType) {
+                                std::cout << "[DEBUG] TypeChecker::inferType - IfExpression returning common ancestor type: " << commonAncestor << std::endl;
+                                return ancestorType;
+                            } else {
+                                std::cout << "[DEBUG] TypeChecker::inferType - IfExpression could not get ancestor type from registry, creating it" << std::endl;
+                                // Try to create the type dynamically
+                                const Type* dynamicType = registry.getType(commonAncestor);
+                                if (dynamicType) {
+                                    std::cout << "[DEBUG] TypeChecker::inferType - IfExpression successfully created dynamic ancestor type: " << commonAncestor << std::endl;
+                                    return dynamicType;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Check if both types are compatible through inheritance
+            if (areTypesCompatibleWithInheritance(thenType, elseType, context)) {
+                std::cout << "[DEBUG] TypeChecker::inferType - IfExpression types are compatible through inheritance, returning: " << thenType->toString() << std::endl;
+                return thenType;
+            }
+            
+            // If no common type found, return the first type as fallback
+            std::cout << "[DEBUG] TypeChecker::inferType - IfExpression no common ancestor found, returning first type: " << thenType->toString() << std::endl;
             return thenType;
+        } else if (thenType) {
+            std::cout << "[DEBUG] TypeChecker::inferType - IfExpression only then type found: " << thenType->toString() << std::endl;
+            return thenType;
+        } else if (elseType) {
+            std::cout << "[DEBUG] TypeChecker::inferType - IfExpression only else type found: " << elseType->toString() << std::endl;
+            return elseType;
         }
+        
+        std::cout << "[DEBUG] TypeChecker::inferType - IfExpression cannot determine type, returning null" << std::endl;
         return nullptr; // Type mismatch
     }
     
@@ -434,6 +496,187 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     return nullptr;
 }
 
+std::string TypeChecker::findCommonAncestor(const std::string& type1, const std::string& type2, IContext* context) {
+    if (type1 == type2) {
+        return type1;
+    }
+    
+    if (!context) {
+        return "";
+    }
+    
+    // Get all ancestors of type1
+    std::unordered_set<std::string> ancestors1;
+    std::string current = type1;
+    while (!current.empty() && current != "Object") {
+        ancestors1.insert(current);
+        current = context->getParentType(current);
+    }
+    ancestors1.insert("Object"); // Object is the root of all types
+    
+    // Walk up the hierarchy of type2 and find the first common ancestor
+    current = type2;
+    while (!current.empty()) {
+        if (ancestors1.find(current) != ancestors1.end()) {
+            return current;
+        }
+        if (current == "Object") {
+            break;
+        }
+        current = context->getParentType(current);
+    }
+    
+    // If no common ancestor found, return Object as the default
+    return "Object";
+}
+
+const Type* TypeChecker::inferIfStatementType(IfStatement* ifStmt, IContext* context) {
+    if (!ifStmt) return nullptr;
+    
+    std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Starting type inference for IfStatement" << std::endl;
+    
+    // Get the branches
+    BlockStatement* thenBranch = ifStmt->getThenBranch();
+    BlockStatement* elseBranch = ifStmt->getElseBranch();
+    
+    if (!thenBranch || !elseBranch) {
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Missing branch, returning void" << std::endl;
+        // If there's no else branch, the if statement doesn't return a value
+        return registry.getVoidType();
+    }
+    
+    std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Both branches present" << std::endl;
+    
+    // Get the last expressions from both branches
+    Expression* thenExpr = thenBranch->getLastExpression();
+    Expression* elseExpr = elseBranch->getLastExpression();
+    
+    std::cout << "[DEBUG] TypeChecker::inferIfStatementType - thenExpr: " << (thenExpr ? "found" : "null") << std::endl;
+    std::cout << "[DEBUG] TypeChecker::inferIfStatementType - elseExpr: " << (elseExpr ? "found" : "null") << std::endl;
+    
+    const Type* thenType = nullptr;
+    const Type* elseType = nullptr;
+    
+    // Get type from then branch
+    if (thenExpr) {
+        thenType = inferType(thenExpr, context);
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - thenType from expression: " << (thenType ? thenType->toString() : "null") << std::endl;
+    } else {
+        // Check if the last statement is an IfStatement
+        Statement* thenStmt = thenBranch->getLastStatement();
+        if (auto thenIfStmt = dynamic_cast<IfStatement*>(thenStmt)) {
+            thenType = inferIfStatementType(thenIfStmt, context);
+            std::cout << "[DEBUG] TypeChecker::inferIfStatementType - thenType from nested if: " << (thenType ? thenType->toString() : "null") << std::endl;
+        }
+    }
+    
+    // Get type from else branch
+    if (elseExpr) {
+        elseType = inferType(elseExpr, context);
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - elseType from expression: " << (elseType ? elseType->toString() : "null") << std::endl;
+    } else {
+        // Check if the last statement is an IfStatement
+        Statement* elseStmt = elseBranch->getLastStatement();
+        if (auto elseIfStmt = dynamic_cast<IfStatement*>(elseStmt)) {
+            elseType = inferIfStatementType(elseIfStmt, context);
+            std::cout << "[DEBUG] TypeChecker::inferIfStatementType - elseType from nested if: " << (elseType ? elseType->toString() : "null") << std::endl;
+        }
+    }
+    
+    if (thenType && elseType) {
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Both types found: " << thenType->toString() << " and " << elseType->toString() << std::endl;
+        
+        // If both types are exactly the same, return that type
+        if (thenType->toString() == elseType->toString()) {
+            std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Types are identical, returning: " << thenType->toString() << std::endl;
+            return thenType;
+        }
+        
+        // Check if both types are user-defined types and find their common ancestor
+        if (auto thenUserType = dynamic_cast<const UserDefinedType*>(thenType)) {
+            if (auto elseUserType = dynamic_cast<const UserDefinedType*>(elseType)) {
+                // Both are user-defined types, check inheritance
+                std::string thenTypeName = thenUserType->getName();
+                std::string elseTypeName = elseUserType->getName();
+                
+                std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Checking common ancestor for: " << thenTypeName << " and " << elseTypeName << std::endl;
+                
+                // Check if they have a common ancestor
+                if (context) {
+                    std::string commonAncestor = findCommonAncestor(thenTypeName, elseTypeName, context);
+                    std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Common ancestor: " << commonAncestor << std::endl;
+                    if (!commonAncestor.empty()) {
+                        const Type* ancestorType = registry.getType(commonAncestor);
+                        if (ancestorType) {
+                            std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Returning common ancestor type: " << commonAncestor << std::endl;
+                            return ancestorType;
+                        } else {
+                            std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Could not get ancestor type from registry, creating it" << std::endl;
+                            // Try to create the type dynamically
+                            const Type* dynamicType = registry.getType(commonAncestor);
+                            if (dynamicType) {
+                                std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Successfully created dynamic ancestor type: " << commonAncestor << std::endl;
+                                return dynamicType;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Check if both types are compatible through inheritance
+        if (areTypesCompatibleWithInheritance(thenType, elseType, context)) {
+            std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Types are compatible through inheritance, returning: " << thenType->toString() << std::endl;
+            return thenType;
+        }
+        
+        // If no common type found, return the first type as fallback
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - No common ancestor found, returning first type: " << thenType->toString() << std::endl;
+        return thenType;
+    } else if (thenType) {
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Only then type found: " << thenType->toString() << std::endl;
+        return thenType;
+    } else if (elseType) {
+        std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Only else type found: " << elseType->toString() << std::endl;
+        return elseType;
+    }
+    
+    // Default to void if we can't determine the type
+    std::cout << "[DEBUG] TypeChecker::inferIfStatementType - Cannot determine type, returning void" << std::endl;
+    return registry.getVoidType();
+}
+
+bool TypeChecker::areTypesCompatible(const Type* expected, const Type* actual) const {
+    if (!expected || !actual) return false;
+    
+    // Direct compatibility check
+    return expected->isCompatibleWith(actual);
+}
+
+bool TypeChecker::areTypesCompatibleWithInheritance(const Type* expected, const Type* actual, IContext* context) const {
+    if (!expected || !actual) return false;
+    
+    // Direct compatibility check
+    if (expected->isCompatibleWith(actual)) {
+        return true;
+    }
+    
+    // Check inheritance compatibility for user-defined types
+    if (auto expectedUser = dynamic_cast<const UserDefinedType*>(expected)) {
+        if (auto actualUser = dynamic_cast<const UserDefinedType*>(actual)) {
+            std::string expectedName = expectedUser->getName();
+            std::string actualName = actualUser->getName();
+            
+            // Check if actual type is a subtype of expected type
+            if (context && context->isSubtypeOf(actualName, expectedName)) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
 const Type* TypeChecker::inferMethodReturnType(const std::string& typeName, const std::string& methodName, IContext* context) {
 
     
@@ -478,7 +721,7 @@ const Type* TypeChecker::inferMethodReturnType(const std::string& typeName, cons
                     } else {
                         // For user-defined types, default to Number for now
 
-                        return registry.getNumberType();
+                        return registry.getType(returnTypeAnnotation);
                     }
                 }
                 

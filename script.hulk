@@ -1,144 +1,44 @@
-type Stack {
-    data: String = "";
-    size: Number = 0;
-    capacity: Number = 10;
-    
-    push(item: String) : Number => {
-        if (self.size >= self.capacity) {
-            print("Stack overflow! Cannot push: " @ item);
-            0;
-        } else {
-            self.data := self.data @@ item @@ "|";
-            self.size := self.size + 1;
-            print("Pushed: " @ item @ " (size: " @ self.size @ ")");
-            1;
-        };
-    };
-    
-    pop() : String => {
-        if (self.size <= 0) {
-            print("Stack underflow! Cannot pop from empty stack");
-            "";
-        } else {
-            let last_pipe : Number  = self.find_last_pipe() in
-            let item : String = self.extract_last_item() in {
-                self.size := self.size - 1;
-                print("Popped: " @ item @ " (size: " @ self.size @ ")");
-                item;
-            };
-        };
-    };
-    
-    find_last_pipe() : Number => self.size - 1;
-    
-    extract_last_item() : String => "item" @ self.size;
-    
-    peek() : String => {
-        if (self.size <= 0) {
-            print("Stack is empty");
-            "";
-        } else {
-            let item : String = self.extract_last_item() in {
-                print("Top item: " @ item);
-                item;
-            };
-        };
-    };
-    
-    is_empty() : Number => 
-        if (self.size == 0) 1 else 0;
-    
-    display() : String => {
-        print("Stack contents (size " @ self.size @ "): " @ self.data);
-        self.data;
+type G {
+    a : Number = 3;
+    foo() => 5;
+} 
+
+
+type Holis inherits G {
+    a : Number = 3;
+}
+
+type A  inherits Holis{
+    a : Number = 3;
+    foo() => 10;
+}
+
+type B inherits A {
+    a : Number = 3;
+    foo() => 20;
+}
+
+type C inherits A {
+    a : Number = 3;
+    foo() => 40;
+}
+
+type D inherits A {
+    a : Number = 3;
+    foo() => 50;
+}
+
+function bar(x:Number) : A {
+    if (x == 5) {
+        new B();
+    } else if (x == 3) {
+        new C();
+    }
+    else {
+        new D();
     };
 }
 
-let stack : Stack = new Stack() in {
-    print("=== Stack Operations Test ===");
-    stack.display();
-    
-    stack.push("first");
-    stack.push("second");
-    stack.push("third");
-    stack.display();
-    
-    stack.peek();
-
-    stack.pop();
-    stack.pop();
-    stack.display();
-    
-    stack.pop();
-    stack.pop(); 
-    
-    print("Is empty: " @ stack.is_empty());
-};
-
-
-type Queue {
-    items: String = "";
-    front_index: Number = 0;
-    rear_index: Number = 0;
-    count: Number = 0;
-    max_size: Number = 8;
-    
-    enqueue(item: String) : Number => {
-        if (self.count >= self.max_size) {
-            print("Queue is full! Cannot enqueue: " @ item);
-            0;
-        } else {
-            self.items := self.items @@ item @@ "|";
-            self.rear_index := self.rear_index + 1;
-            self.count := self.count + 1;
-            print("Enqueued: " @ item @ " (count: " @ self.count @ ")");
-            1;
-        };
-    };
-    
-    dequeue() : String => {
-        if (self.count <= 0) {
-            print("Queue is empty! Cannot dequeue");
-            "";
-        } else {
-            let item = "item" @ (self.front_index + 1) in {
-                self.front_index := self.front_index + 1;
-                self.count := self.count - 1;
-                print("Dequeued: " @ item @ " (count: " @ self.count @ ")");
-                item;
-            };
-        };
-    };
-    
-    size() : Number => self.count;
-    
-    is_full() : Number => 
-        if (self.count >= self.max_size) 1 else 0;
-    
-    display() : String => {
-        print("Queue state - Count: " @ self.count @ ", Front: " @ self.front_index @ ", Rear: " @ self.rear_index);
-        print("Items: " @ self.items);
-        self.items;
-    };
-}
-
-let queue = new Queue() in {
-    print("\n=== Queue Operations Test ===");
-    queue.display();
-    
-    for (i in range(1, 6)) {
-        queue.enqueue("task" @ i);
-    };
-    queue.display();
-    
-    queue.dequeue();
-    queue.dequeue();
-    queue.display();
-    
-    queue.enqueue("task6");
-    queue.enqueue("task7");
-    queue.display();
-    
-    queue.enqueue("task8");
-    queue.enqueue("task9");
-};
+print(bar(5).foo());
+print(bar(3).foo());
+print(bar(9).foo());

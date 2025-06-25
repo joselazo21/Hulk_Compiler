@@ -139,38 +139,49 @@ bool FunctionDeclaration::Validate(IContext* context) {
     
     // Get the last expression from the body to check its type
     Expression* lastExpr = body->getLastExpression();
-
+    const Type* actualReturnType = nullptr;
+    
+    // Create type registry and checker for type inference
+    TypeRegistry typeRegistry(functionContext.get());
+    TypeChecker checker(typeRegistry);
     
     if (lastExpr) {
-
-        
-        // Create type registry and checker for type inference
-        TypeRegistry typeRegistry(functionContext.get());
-        TypeChecker checker(typeRegistry);
+        std::cout << "[DEBUG] Found last expression, inferring type" << std::endl;
+        std::cout << "[DEBUG] Last expression type: " << typeid(*lastExpr).name() << std::endl;
         
         // Infer the type of the last expression
-        const Type* actualReturnType = checker.inferType(lastExpr, functionContext.get());
+        actualReturnType = checker.inferType(lastExpr, functionContext.get());
+        std::cout << "[DEBUG] Inferred type result: " << (actualReturnType ? actualReturnType->toString() : "null") << std::endl;
+    } else {
+        std::cout << "[DEBUG] No last expression found, checking for IfStatement" << std::endl;
         
-        if (actualReturnType) {
-            std::string actualTypeName = actualReturnType->toString();
-
-            
-            // Check if the actual return type matches the declared return type
-            if (actualTypeName != returnType) {
-                SEMANTIC_ERROR("Function '" + name + "' declared to return " + returnType + 
-                             " but actually returns " + actualTypeName, location);
-                returnTypeValid = false;
-            } else {
-
-            }
+        // Check if the last statement is an IfStatement
+        Statement* lastStmt = body->getLastStatement();
+        if (auto ifStmt = dynamic_cast<IfStatement*>(lastStmt)) {
+            std::cout << "[DEBUG] Found IfStatement as last statement, inferring type" << std::endl;
+            actualReturnType = checker.inferIfStatementType(ifStmt, functionContext.get());
         } else {
-            // Could not infer the return type - this might be an error in the expression
-
-            SEMANTIC_ERROR("Cannot determine return type of function '" + name + "'", location);
+            std::cout << "[DEBUG] Last statement is not an IfStatement" << std::endl;
+        }
+    }
+    
+    if (actualReturnType) {
+        std::string actualTypeName = actualReturnType->toString();
+        std::cout << "[DEBUG] Inferred return type: " << actualTypeName << std::endl;
+        
+        // Check if the actual return type matches the declared return type
+        if (actualTypeName != returnType) {
+            SEMANTIC_ERROR("Function '" + name + "' declared to return " + returnType + 
+                         " but actually returns " + actualTypeName, location);
             returnTypeValid = false;
+        } else {
+            std::cout << "[DEBUG] Return type matches declaration" << std::endl;
         }
     } else {
-
+        // Could not infer the return type - this might be an error in the expression
+        std::cout << "[DEBUG] Cannot determine return type of function '" << name << "'" << std::endl;
+        SEMANTIC_ERROR("Cannot determine return type of function '" + name + "'", location);
+        returnTypeValid = false;
     }
 
     // Return true only if both body validation and return type validation succeeded
@@ -225,6 +236,9 @@ void FunctionDeclaration::generateDeclarations(CodeGenerator& cg) {
             retType = llvm::Type::getInt1Ty(cg.getContext());
         } else if (returnType == "Number") {
             retType = llvm::Type::getFloatTy(cg.getContext());
+        } else {
+            // For user-defined types (like A, B, C), return i8* (generic object pointer)
+            retType = llvm::Type::getInt8PtrTy(cg.getContext());
         }
         
         llvm::FunctionType* functionType = llvm::FunctionType::get(
@@ -277,6 +291,35 @@ llvm::Value* FunctionDeclaration::generateExecutableCode(CodeGenerator& cg, bool
 
     llvm::Value* retVal = body->codegen(cg);
 
+    // If we have a return value and the current block doesn't have a terminator, create a return
+    llvm::BasicBlock* currentBlock = cg.getBuilder()->GetInsertBlock();
+    if (currentBlock && !currentBlock->getTerminator() && retVal) {
+        // Check if the return value type matches the expected return type
+        llvm::Type* expectedRetType = function->getReturnType();
+        if (retVal->getType() == expectedRetType) {
+            cg.getBuilder()->CreateRet(retVal);
+        } else if (expectedRetType->isPointerTy() && retVal->getType()->isPointerTy()) {
+            // Cast between pointer types if needed
+            llvm::Value* castedRet = cg.getBuilder()->CreateBitCast(retVal, expectedRetType, "ret.cast");
+            cg.getBuilder()->CreateRet(castedRet);
+        } else {
+            // Type mismatch - use default value
+            if (returnType == "String") {
+                cg.getBuilder()->CreateRet(
+                    llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(cg.getContext())));
+            } else if (returnType == "Boolean") {
+                cg.getBuilder()->CreateRet(
+                    llvm::ConstantInt::get(llvm::Type::getInt1Ty(cg.getContext()), 0));
+            } else if (returnType == "Number") {
+                cg.getBuilder()->CreateRet(
+                    llvm::ConstantFP::get(llvm::Type::getFloatTy(cg.getContext()), 0.0f));
+            } else {
+                cg.getBuilder()->CreateRet(
+                    llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(cg.getContext())));
+            }
+        }
+    }
+
     // Add terminators to blocks that need them
     for (auto& block : *function) {
         if (!block.getTerminator()) {
@@ -290,10 +333,14 @@ llvm::Value* FunctionDeclaration::generateExecutableCode(CodeGenerator& cg, bool
             } else if (returnType == "Boolean") {
                 cg.getBuilder()->CreateRet(
                     llvm::ConstantInt::get(llvm::Type::getInt1Ty(cg.getContext()), 0));
-            } else {
+            } else if (returnType == "Number") {
                 // Default to Number (float) - don't use retVal which might be i32
                 cg.getBuilder()->CreateRet(
                     llvm::ConstantFP::get(llvm::Type::getFloatTy(cg.getContext()), 0.0f));
+            } else {
+                // For user-defined types, return null pointer
+                cg.getBuilder()->CreateRet(
+                    llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(cg.getContext())));
             }
         }
     }
@@ -354,6 +401,9 @@ llvm::Value* FunctionDeclaration::codegen(CodeGenerator& generator) {
             retType = llvm::Type::getInt1Ty(generator.getContext());
         } else if (returnType == "Number") {
             retType = llvm::Type::getFloatTy(generator.getContext());
+        } else {
+            // For user-defined types (like A, B, C), return i8* (generic object pointer)
+            retType = llvm::Type::getInt8PtrTy(generator.getContext());
         }
         
         llvm::FunctionType* functionType = llvm::FunctionType::get(
@@ -408,6 +458,35 @@ llvm::Value* FunctionDeclaration::codegen(CodeGenerator& generator) {
     // Generate function body
     llvm::Value* retVal = body->codegen(generator);
     
+    // If we have a return value and the current block doesn't have a terminator, create a return
+    llvm::BasicBlock* currentBlock = generator.getBuilder()->GetInsertBlock();
+    if (currentBlock && !currentBlock->getTerminator() && retVal) {
+        // Check if the return value type matches the expected return type
+        llvm::Type* expectedRetType = function->getReturnType();
+        if (retVal->getType() == expectedRetType) {
+            generator.getBuilder()->CreateRet(retVal);
+        } else if (expectedRetType->isPointerTy() && retVal->getType()->isPointerTy()) {
+            // Cast between pointer types if needed
+            llvm::Value* castedRet = generator.getBuilder()->CreateBitCast(retVal, expectedRetType, "ret.cast");
+            generator.getBuilder()->CreateRet(castedRet);
+        } else {
+            // Type mismatch - use default value
+            if (returnType == "String") {
+                generator.getBuilder()->CreateRet(
+                    llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(generator.getContext())));
+            } else if (returnType == "Boolean") {
+                generator.getBuilder()->CreateRet(
+                    llvm::ConstantInt::get(llvm::Type::getInt1Ty(generator.getContext()), 0));
+            } else if (returnType == "Number") {
+                generator.getBuilder()->CreateRet(
+                    llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f));
+            } else {
+                generator.getBuilder()->CreateRet(
+                    llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(generator.getContext())));
+            }
+        }
+    }
+    
     // Add terminators to blocks that need them
     for (auto& block : *function) {
         if (!block.getTerminator()) {
@@ -421,10 +500,14 @@ llvm::Value* FunctionDeclaration::codegen(CodeGenerator& generator) {
             } else if (returnType == "Boolean") {
                 generator.getBuilder()->CreateRet(
                     llvm::ConstantInt::get(llvm::Type::getInt1Ty(generator.getContext()), 0));
-            } else {
+            } else if (returnType == "Number") {
                 // Default to Number (float) - don't use retVal which might be i32
                 generator.getBuilder()->CreateRet(
                     llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f));
+            } else {
+                // For user-defined types, return null pointer
+                generator.getBuilder()->CreateRet(
+                    llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(generator.getContext())));
             }
         }
     }

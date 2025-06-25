@@ -48,6 +48,11 @@ WHITESPACE [ \t\r]+
 "base"          { printf("<BASE>\n"); return BASE; }
 "is"            { printf("<IS>\n"); return IS; }
 "as"            { printf("<AS>\n"); return AS; }
+"true"          { printf("<TRUE>\n"); return TRUE; }
+"false"         { printf("<FALSE>\n"); return FALSE; }
+"Number"        { printf("<NUMBER_TYPE>\n"); return NUMBER_TYPE; }
+"String"        { printf("<STRING_TYPE>\n"); return STRING_TYPE; }
+"Boolean"       { printf("<BOOLEAN_TYPE>\n"); return BOOLEAN_TYPE; }
 
 ":"             { printf("<COLON>\n"); return ':'; }
 "=="            { printf("<EQ>\n"); return EQ; }

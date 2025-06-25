@@ -173,6 +173,12 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
             }
         }
     }
+    // If the object is a function call, get the return type from the function
+    else if (auto functionCall = dynamic_cast<FunctionCall*>(object)) {
+        std::string functionName = functionCall->getFunctionName();
+        objectTypeName = generator.getContextObject()->getFunctionReturnType(functionName);
+        std::cout << "[DEBUG] MethodCall::codegen - Function call '" << functionName << "' returns type '" << objectTypeName << "'" << std::endl;
+    }
     // If the object is a member access, we need to determine the type of the member
     else if (auto memberAccess = dynamic_cast<MemberAccess*>(object)) {
         // For member access, we need to look up the field type in the parent object
@@ -346,6 +352,25 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
         return nullptr;
     }
     
+    // Check if this method is overridden in any derived classes
+    // If so, we need to use virtual dispatch
+    bool needsVirtualDispatch = false;
+    std::vector<std::string> derivedTypes;
+    
+    // Find all types that inherit from the current type and override this method
+    llvm::Module* module = generator.getModule();
+    for (auto& func : *module) {
+        std::string funcName = func.getName().str();
+        if (funcName.find("." + methodName) != std::string::npos) {
+            std::string typeName = funcName.substr(0, funcName.find("." + methodName));
+            // Check if this type is a subtype of our current type
+            if (typeName != structName && context->isSubtypeOf(typeName, structName)) {
+                derivedTypes.push_back(typeName);
+                needsVirtualDispatch = true;
+            }
+        }
+    }
+    
     // Check if we need to cast the object to a parent type
     // Get the actual type that owns the method
     std::string methodOwnerType = structName;
@@ -489,15 +514,124 @@ llvm::Value* MethodCall::codegen(CodeGenerator& generator) {
         }
     }
     
-    // Call the method
-    llvm::Value* result = builder->CreateCall(method, argValues, "call." + methodName);
+    // If virtual dispatch is needed, generate runtime type checking
+    llvm::Value* result = nullptr;
     
+    if (needsVirtualDispatch && !derivedTypes.empty()) {
+        std::cout << "[DEBUG] MethodCall::codegen - Using virtual dispatch for method '" << methodName << "'" << std::endl;
+        
+        // Get the current function and basic block
+        llvm::Function* currentFunc = builder->GetInsertBlock()->getParent();
+        llvm::BasicBlock* currentBB = builder->GetInsertBlock();
+        
+        // Create the merge block where all paths will converge
+        llvm::BasicBlock* mergeBB = llvm::BasicBlock::Create(generator.getContext(), "method.dispatch.merge", currentFunc);
+        
+        // Create PHI node for collecting results from different method calls
+        llvm::PHINode* phi = llvm::PHINode::Create(
+            method->getReturnType(),
+            derivedTypes.size() + 1, // +1 for base case
+            "method.result",
+            mergeBB
+        );
+        
+        // Get the runtime type checking function
+        llvm::Function* typeCheckFunc = module->getFunction("__hulk_runtime_type_check_enhanced");
+        if (!typeCheckFunc) {
+            // Declare the runtime type checking function
+            std::vector<llvm::Type*> typeCheckParams = {
+                llvm::Type::getInt8PtrTy(generator.getContext()), // void* object
+                llvm::Type::getInt8PtrTy(generator.getContext())  // const char* type_name
+            };
+            llvm::FunctionType* typeCheckFuncType = llvm::FunctionType::get(
+                llvm::Type::getInt32Ty(generator.getContext()), // returns int
+                typeCheckParams,
+                false
+            );
+            typeCheckFunc = llvm::Function::Create(
+                typeCheckFuncType,
+                llvm::Function::ExternalLinkage,
+                "__hulk_runtime_type_check_enhanced",
+                module
+            );
+        }
+        
+        // Cast object to i8* for runtime type checking
+        llvm::Value* objectAsI8Ptr = builder->CreateBitCast(objectValue, llvm::Type::getInt8PtrTy(generator.getContext()), "obj.as.i8ptr");
+        
+        llvm::BasicBlock* nextCheckBB = currentBB;
+        
+        // Generate checks for each derived type (in reverse order of inheritance depth)
+        for (const std::string& derivedType : derivedTypes) {
+            // Create basic blocks
+            llvm::BasicBlock* checkBB = nextCheckBB;
+            llvm::BasicBlock* callBB = llvm::BasicBlock::Create(generator.getContext(), "call." + derivedType, currentFunc);
+            llvm::BasicBlock* nextBB = llvm::BasicBlock::Create(generator.getContext(), "check.next." + derivedType, currentFunc);
+            
+            // Set insert point to the check block
+            builder->SetInsertPoint(checkBB);
+            
+            // Create string constant for type name
+            llvm::Value* typeNameStr = builder->CreateGlobalStringPtr(derivedType, "typename." + derivedType);
+            
+            // Call runtime type check
+            llvm::Value* isType = builder->CreateCall(typeCheckFunc, {objectAsI8Ptr, typeNameStr}, "is." + derivedType);
+            llvm::Value* isTypeCondition = builder->CreateICmpNE(isType, llvm::ConstantInt::get(llvm::Type::getInt32Ty(generator.getContext()), 0), "is." + derivedType + ".cond");
+            
+            // Branch based on type check
+            builder->CreateCondBr(isTypeCondition, callBB, nextBB);
+            
+            // Generate method call for this derived type
+            builder->SetInsertPoint(callBB);
+            
+            // Get the method for this derived type
+            llvm::Function* derivedMethod = module->getFunction(derivedType + "." + methodName);
+            if (derivedMethod) {
+                // Cast object to the derived type
+                llvm::StructType* derivedStructType = context->getType(derivedType);
+                if (derivedStructType) {
+                    llvm::Value* derivedObjectValue = builder->CreateBitCast(objectValue, derivedStructType->getPointerTo(), "cast.to." + derivedType);
+                    
+                    // Prepare arguments for derived method call
+                    std::vector<llvm::Value*> derivedArgValues;
+                    derivedArgValues.push_back(derivedObjectValue);
+                    for (size_t i = 1; i < argValues.size(); ++i) {
+                        derivedArgValues.push_back(argValues[i]);
+                    }
+                    
+                    // Call the derived method
+                    llvm::Value* derivedResult = builder->CreateCall(derivedMethod, derivedArgValues, "call." + derivedType + "." + methodName);
+                    
+                    // Add to PHI node
+                    phi->addIncoming(derivedResult, callBB);
+                    
+                    // Branch to merge block
+                    builder->CreateBr(mergeBB);
+                }
+            }
+            
+            nextCheckBB = nextBB;
+        }
+        
+        // Generate the default case (base method call)
+        builder->SetInsertPoint(nextCheckBB);
+        llvm::Value* baseResult = builder->CreateCall(method, argValues, "call.base." + methodName);
+        phi->addIncoming(baseResult, nextCheckBB);
+        builder->CreateBr(mergeBB);
+        
+        // Set insert point to merge block and return the PHI result
+        builder->SetInsertPoint(mergeBB);
+        result = phi;
+        
+    } else {
+        // Use static dispatch (original behavior)
+        result = builder->CreateCall(method, argValues, "call." + methodName);
+    }
 
     if (result) {
         std::string resultTypeStr;
         llvm::raw_string_ostream rso(resultTypeStr);
         result->getType()->print(rso);
-
     }
     
     return result;

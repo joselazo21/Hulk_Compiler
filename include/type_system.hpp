@@ -164,6 +164,9 @@ public:
         auto it = methods.find(methodName);
         return it != methods.end() ? it->second.get() : nullptr;
     }
+    
+    // Getter for the type name
+    const std::string& getName() const { return name; }
 };
 
 // Type registry for managing all types in the system
@@ -220,11 +223,17 @@ public:
     // Infer the return type of a method by analyzing its body
     const Type* inferMethodReturnType(const std::string& typeName, const std::string& methodName, class IContext* context);
     
-    // Check if two types are compatible
-    bool areTypesCompatible(const Type* expected, const Type* actual) const {
-        if (!expected || !actual) return false;
-        return expected->isCompatibleWith(actual);
-    }
+    // Find common ancestor of two types in the inheritance hierarchy
+    std::string findCommonAncestor(const std::string& type1, const std::string& type2, class IContext* context);
+    
+    // Infer the type of an IfStatement when used as an expression
+    const Type* inferIfStatementType(class IfStatement* ifStmt, class IContext* context);
+    
+    // Check if two types are compatible (including inheritance)
+    bool areTypesCompatible(const Type* expected, const Type* actual) const;
+    
+    // Check if two types are compatible with inheritance support
+    bool areTypesCompatibleWithInheritance(const Type* expected, const Type* actual, class IContext* context) const;
     
     // Check function call compatibility
     bool checkFunctionCall(const FunctionType* funcType, const std::vector<const Type*>& argTypes) const {

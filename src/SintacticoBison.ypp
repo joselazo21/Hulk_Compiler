@@ -1016,8 +1016,8 @@ expression
     | expression GE expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, ">="); }
     | expression AND expression  { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "&&"); }
     | expression OR expression   { $$ = new BinaryOperation(SourceLocation(yylineno, @2.first_column), $1, $3, "||"); }
-    | expression IS ID           { $$ = new IsExpression(SourceLocation(yylineno, @2.first_column), $1, $3); free($3); }
-    | expression AS ID           { $$ = new AsExpression(SourceLocation(yylineno, @2.first_column), $1, $3); free($3); }
+    | expression IS type_name    { $$ = new IsExpression(SourceLocation(yylineno, @2.first_column), $1, *$3); delete $3; }
+    | expression AS type_name    { $$ = new AsExpression(SourceLocation(yylineno, @2.first_column), $1, *$3); delete $3; }
     | '-' expression %prec UMINUS { $$ = new UnaryOperation(SourceLocation(yylineno, @1.first_column), $2, "-"); }
     | NUMBER                     { $$ = new Number(SourceLocation(yylineno, @1.first_column), $1); }
     | STRING                     { $$ = new StringLiteral(SourceLocation(yylineno, @1.first_column), $1); free($1); }

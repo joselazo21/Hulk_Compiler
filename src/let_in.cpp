@@ -463,42 +463,25 @@ LetIn::~LetIn() {
     delete expr;
 }
 
-llvm::Value* LetIn::codegen(CodeGenerator& generator) {
+void LetIn::codegen_typed(CodeGenerator& generator, IContext* letContext, std::map<std::string, llvm::Value*>& oldBindings, std::vector<std::string>& declaredVars) {
     IContext* oldContext = generator.getContextObject();
-    IContext* letContext = oldContext ? oldContext->createChildContext() : nullptr;
-    generator.setContextObject(letContext);
-
-    // Declarar oldBindings para guardar los valores antiguos de las variables
-    std::map<std::string, llvm::Value*> oldBindings;
-    
-    // Mantener un registro de las variables declaradas en este let-in
-    std::vector<std::string> declaredVars;
-
-    // Procesar declaraciones y guardar valores antiguos
-    if (useTypedDecls) {
-        for (const auto& binding : typedDecls) {
-            const std::string& varName = binding.name;
-            declaredVars.push_back(varName);
-            
-            llvm::Value* oldVal = generator.getNamedValue(varName);
-            if (oldVal) {
-                oldBindings[varName] = oldVal;
-            }
-
-            // Set the current variable name context for vector data association
-
-            generator.setCurrentLetInVariableName(varName);
-            
-            // Generar valor de la expresión de la declaración
-            llvm::Value* val = binding.expr->codegen(generator);
+    for (const auto& binding : typedDecls) {
+        const std::string& varName = binding.name;
+        declaredVars.push_back(varName);
         
-        // Clear the current variable name context
+        llvm::Value* oldVal = generator.getNamedValue(varName);
+        if (oldVal) {
+            oldBindings[varName] = oldVal;
+        }
 
+        generator.setCurrentLetInVariableName(varName);
+        
+        llvm::Value* val = binding.expr->codegen(generator);
+    
         generator.setCurrentLetInVariableName("");
         if (!val) {
             std::cerr << "Warning: Failed to generate code for declaration of " << varName << ", using default value" << std::endl;
             
-            // Use appropriate default value based on type annotation
             if (!binding.typeAnnotation.empty()) {
                 if (binding.typeAnnotation == "String") {
                     val = generator.createGlobalString("");
@@ -512,24 +495,16 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             }
         }
 
-        // Detectar si es un iterador
         bool isIter = varName.rfind("__iter_", 0) == 0;
 
         if (isIter) {
-            // Para iteradores, usar la variable global directamente
-            // 1. Get or create the global variable
             llvm::GlobalVariable* globalIter = generator.getIteratorGlobalVariable(varName);
             
-            // 2. Store the range value in the global - ensure type compatibility
             llvm::Type* globalType = globalIter->getValueType();
             if (val->getType() != globalType) {
-                // If types don't match, we need to handle the conversion
                 if (globalType->isPointerTy() && val->getType()->isPointerTy()) {
-                    // Both are pointers, try bitcast
                     val = generator.getBuilder()->CreateBitCast(val, globalType, varName + "_cast");
                 } else if (globalType->isPointerTy() && val->getType()->isIntegerTy(32)) {
-                    // If global expects a pointer but we have an integer, this might be a variable reference
-                    // Try to load the actual range pointer from the variable
                     if (auto* varExpr = dynamic_cast<Variable*>(binding.expr)) {
                         std::string sourceVarName = varExpr->getName();
                         llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
@@ -544,95 +519,61 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                         }
                     }
                     
-
                     if (val->getType() != globalType) {
-
-
                         globalType->print(llvm::errs());
                         std::cout << std::endl;
-
                         val->getType()->print(llvm::errs());
                         std::cout << std::endl;
                         
                         SEMANTIC_ERROR("Type mismatch when storing iterator value for '" + varName + "'", getLocation());
                         generator.setContextObject(oldContext);
                         if (letContext) delete letContext;
-                        return nullptr;
+                        return;
                     }
                 } else {
-
-
-
                     globalType->print(llvm::errs());
                     std::cout << std::endl;
-
                     val->getType()->print(llvm::errs());
                     std::cout << std::endl;
                     
                     SEMANTIC_ERROR("Type mismatch when storing iterator value for '" + varName + "'", getLocation());
                     generator.setContextObject(oldContext);
                     if (letContext) delete letContext;
-                    return nullptr;
+                    return;
                 }
             }
             generator.getBuilder()->CreateStore(val, globalIter);
             
-            // 3. Check if this is a vector expression and transfer vector data
-
             if (auto* vectorExpr = dynamic_cast<VectorExpression*>(binding.expr)) {
-
                 if (!vectorExpr->getIsGenerator()) {
-                    // Extract vector values and store them for the iterator
                     std::vector<double> vectorValues;
-
                     for (auto* elem : vectorExpr->getElements()) {
                         if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
                             double value = numberExpr->getValue();
-
                             vectorValues.push_back(value);
-                        } else {
-
                         }
                     }
                     if (!vectorValues.empty()) {
-
                         generator.storeVectorDataForIterator(varName, vectorValues);
-                    } else {
-
                     }
                 }
             } else if (auto* varExpr = dynamic_cast<Variable*>(binding.expr)) {
-                // Check if this iterator is being assigned a variable that has vector data
                 std::string sourceVarName = varExpr->getName();
-
                 
-                // Try to find vector data for the source variable
                 if (generator.hasVectorDataForIterator(sourceVarName)) {
                     std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
-
-
                     for (double val : sourceVectorData) {
                         std::cout << val << " ";
                     }
                     std::cout << std::endl;
                     generator.storeVectorDataForIterator(varName, sourceVectorData);
                 } else {
-
-                    
-                    // Try to find the actual variable and check if it has vector data stored
                     llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
                     if (sourceVar) {
-
-                        
-                        // Check if there's vector data stored for any key that might match
-                        // Look for vector data that was stored when the variable was created
                         auto vectorDataMap = generator.getAllVectorData();
                         for (const auto& pair : vectorDataMap) {
-
                             if (pair.first.find(sourceVarName) != std::string::npos || 
                                 pair.first == sourceVarName) {
-
-
                                 for (int val : pair.second) {
                                     std::cout << val << " ";
                                 }
@@ -643,38 +584,25 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
                         }
                     }
                 }
-            } else {
-
             }
             
-            // 4. NOW implement the iterator functions (after the global is created and value stored)
             generator.implementIteratorFunctions(varName);
             
-            // 5. Store the global pointer as the named value for this iterator
             generator.setNamedValue(varName, globalIter);
         } else {
-            // Para variables normales, crear alloca local
-            // For object types, preserve the runtime type information by storing as i8* (generic pointer)
-            // but keep track of the actual runtime type
-            llvm::Type* varType = val->getType(); // Use the type of the value
-            std::string semanticTypeName; // Track the semantic type name
+            llvm::Type* varType = val->getType();
+            std::string semanticTypeName;
             
-            // If this is a runtime object type (pointer to struct with runtime type info),
-            // store it as i8* to preserve polymorphism while keeping runtime type info
             if (varType->isPointerTy()) {
                 llvm::Type* pointedType = varType->getPointerElementType();
                 if (pointedType->isStructTy()) {
                     llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
                     std::string typeName = structType->getName().str();
                     if (typeName.find("runtime.") == 0) {
-                        // Extract the semantic type name (remove "runtime." prefix)
                         semanticTypeName = typeName.substr(8);
-                        // This is a runtime object, store as i8* to preserve polymorphism
                         varType = llvm::Type::getInt8PtrTy(generator.getContext());
-                        // Cast the value to i8* for storage
                         val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
                     } else if (typeName.find("struct.") == 0) {
-                        // Extract the semantic type name (remove "struct." prefix)
                         semanticTypeName = typeName.substr(7);
                     } else {
                         semanticTypeName = typeName;
@@ -689,16 +617,13 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             generator.getBuilder()->CreateStore(val, alloca);
             generator.setNamedValue(varName, alloca);
             
-            // Store the semantic type name if we have one
             if (!semanticTypeName.empty()) {
-                // Store in both the current context and the old (global) context
                 generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
                 if (oldContext) {
                     oldContext->setVariableTypeName(varName, semanticTypeName);
                 }
                 std::cout << "[DEBUG] LetIn::codegen - Stored semantic type '" << semanticTypeName << "' for variable '" << varName << "'" << std::endl;
             } else if (!binding.typeAnnotation.empty()) {
-                // Use the type annotation if no semantic type was inferred
                 generator.getContextObject()->setVariableTypeName(varName, binding.typeAnnotation);
                 if (oldContext) {
                     oldContext->setVariableTypeName(varName, binding.typeAnnotation);
@@ -707,221 +632,176 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             }
         }
     }
-    } else {
-        // Legacy processing for backward compatibility
-        for (const auto& decl : decls) {
-            const std::string& varName = decl.first;
-            declaredVars.push_back(varName);
-            
-            std::cout << "[DEBUG] LetIn::codegen (legacy) - Processing variable '" << varName << "'" << std::endl;
-            
-            llvm::Value* oldVal = generator.getNamedValue(varName);
-            if (oldVal) {
-                oldBindings[varName] = oldVal;
-            }
+}
 
-            // Set the current variable name context for vector data association
-            generator.setCurrentLetInVariableName(varName);
-            
-            // Generar valor de la expresión de la declaración
-            llvm::Value* val = decl.second->codegen(generator);
-            
-            // Clear the current variable name context
-            generator.setCurrentLetInVariableName("");
-            if (!val) {
-                std::cerr << "Warning: Failed to generate code for declaration of " << varName << ", using default value" << std::endl;
-                // For legacy declarations, default to float since we don't have type annotations
-                val = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
-            }
+void LetIn::codegen_untyped(CodeGenerator& generator, IContext* letContext, std::map<std::string, llvm::Value*>& oldBindings, std::vector<std::string>& declaredVars) {
+    IContext* oldContext = generator.getContextObject();
+    for (const auto& decl : decls) {
+        const std::string& varName = decl.first;
+        declaredVars.push_back(varName);
+        
+        std::cout << "[DEBUG] LetIn::codegen (legacy) - Processing variable '" << varName << "'" << std::endl;
+        
+        llvm::Value* oldVal = generator.getNamedValue(varName);
+        if (oldVal) {
+            oldBindings[varName] = oldVal;
+        }
 
-            // Detectar si es un iterador
-            bool isIter = varName.rfind("__iter_", 0) == 0;
+        generator.setCurrentLetInVariableName(varName);
+        
+        llvm::Value* val = decl.second->codegen(generator);
+        
+        generator.setCurrentLetInVariableName("");
+        if (!val) {
+            std::cerr << "Warning: Failed to generate code for declaration of " << varName << ", using default value" << std::endl;
+            val = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
+        }
 
-            if (isIter) {
-                // Para iteradores, usar la variable global directamente
-                // 1. Get or create the global variable
-                llvm::GlobalVariable* globalIter = generator.getIteratorGlobalVariable(varName);
-                
-                // 2. Store the range value in the global - ensure type compatibility
-                llvm::Type* globalType = globalIter->getValueType();
-                if (val->getType() != globalType) {
-                    // If types don't match, we need to handle the conversion
-                    if (globalType->isPointerTy() && val->getType()->isPointerTy()) {
-                        // Both are pointers, try bitcast
-                        val = generator.getBuilder()->CreateBitCast(val, globalType, varName + "_cast");
-                    } else if (globalType->isPointerTy() && val->getType()->isIntegerTy(32)) {
-                        // If global expects a pointer but we have an integer, this might be a variable reference
-                        // Try to load the actual range pointer from the variable
-                        if (auto* varExpr = dynamic_cast<Variable*>(decl.second)) {
-                            std::string sourceVarName = varExpr->getName();
-                            llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
-                            if (sourceVar && llvm::isa<llvm::AllocaInst>(sourceVar)) {
-                                llvm::AllocaInst* alloca = llvm::cast<llvm::AllocaInst>(sourceVar);
-                                if (alloca->getAllocatedType()->isPointerTy()) {
-                                    val = generator.getBuilder()->CreateLoad(alloca->getAllocatedType(), alloca, sourceVarName + "_load");
-                                    if (val->getType() != globalType) {
-                                        val = generator.getBuilder()->CreateBitCast(val, globalType, varName + "_cast");
-                                    }
+        bool isIter = varName.rfind("__iter_", 0) == 0;
+
+        if (isIter) {
+            llvm::GlobalVariable* globalIter = generator.getIteratorGlobalVariable(varName);
+            
+            llvm::Type* globalType = globalIter->getValueType();
+            if (val->getType() != globalType) {
+                if (globalType->isPointerTy() && val->getType()->isPointerTy()) {
+                    val = generator.getBuilder()->CreateBitCast(val, globalType, varName + "_cast");
+                } else if (globalType->isPointerTy() && val->getType()->isIntegerTy(32)) {
+                    if (auto* varExpr = dynamic_cast<Variable*>(decl.second)) {
+                        std::string sourceVarName = varExpr->getName();
+                        llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
+                        if (sourceVar && llvm::isa<llvm::AllocaInst>(sourceVar)) {
+                            llvm::AllocaInst* alloca = llvm::cast<llvm::AllocaInst>(sourceVar);
+                            if (alloca->getAllocatedType()->isPointerTy()) {
+                                val = generator.getBuilder()->CreateLoad(alloca->getAllocatedType(), alloca, sourceVarName + "_load");
+                                if (val->getType() != globalType) {
+                                    val = generator.getBuilder()->CreateBitCast(val, globalType, varName + "_cast");
                                 }
                             }
                         }
-                        
-
-                        if (val->getType() != globalType) {
-
-
-                            globalType->print(llvm::errs());
-                            std::cout << std::endl;
-
-                            val->getType()->print(llvm::errs());
-                            std::cout << std::endl;
-                            
-                            SEMANTIC_ERROR("Type mismatch when storing iterator value for '" + varName + "'", getLocation());
-                            generator.setContextObject(oldContext);
-                            if (letContext) delete letContext;
-                            return nullptr;
-                        }
-                    } else {
-
-
-
+                    }
+                    
+                    if (val->getType() != globalType) {
                         globalType->print(llvm::errs());
                         std::cout << std::endl;
-
                         val->getType()->print(llvm::errs());
                         std::cout << std::endl;
                         
                         SEMANTIC_ERROR("Type mismatch when storing iterator value for '" + varName + "'", getLocation());
                         generator.setContextObject(oldContext);
                         if (letContext) delete letContext;
-                        return nullptr;
-                    }
-                }
-                generator.getBuilder()->CreateStore(val, globalIter);
-                
-                // 3. Check if this is a vector expression and transfer vector data
-
-                if (auto* vectorExpr = dynamic_cast<VectorExpression*>(decl.second)) {
-
-                    if (!vectorExpr->getIsGenerator()) {
-                        // Extract vector values and store them for the iterator
-                        std::vector<double> vectorValues;
-
-                        for (auto* elem : vectorExpr->getElements()) {
-                            if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
-                                double value = numberExpr->getValue();
-
-                                vectorValues.push_back(value);
-                            } else {
-
-                            }
-                        }
-                        if (!vectorValues.empty()) {
-
-                            generator.storeVectorDataForIterator(varName, vectorValues);
-                        } else {
-
-                        }
-                    }
-                } else if (auto* varExpr = dynamic_cast<Variable*>(decl.second)) {
-                    // Check if this iterator is being assigned a variable that has vector data
-                    std::string sourceVarName = varExpr->getName();
-
-                    
-                    // Try to find vector data for the source variable
-                    if (generator.hasVectorDataForIterator(sourceVarName)) {
-                        std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
-
-
-                        for (double val : sourceVectorData) {
-                            std::cout << val << " ";
-                        }
-                        std::cout << std::endl;
-                        generator.storeVectorDataForIterator(varName, sourceVectorData);
-                    } else {
-
-                        
-                        // Try to find the actual variable and check if it has vector data stored
-                        llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
-                        if (sourceVar) {
-
-                            
-                            // Check if there's vector data stored for any key that might match
-                            // Look for vector data that was stored when the variable was created
-                            auto vectorDataMap = generator.getAllVectorData();
-                            for (const auto& pair : vectorDataMap) {
-
-                                if (pair.first.find(sourceVarName) != std::string::npos || 
-                                    pair.first == sourceVarName) {
-
-
-                                    for (int val : pair.second) {
-                                        std::cout << val << " ";
-                                    }
-                                    std::cout << std::endl;
-                                    generator.storeVectorDataForIterator(varName, pair.second);
-                                    break;
-                                }
-                            }
-                        }
+                        return;
                     }
                 } else {
-
+                    globalType->print(llvm::errs());
+                    std::cout << std::endl;
+                    val->getType()->print(llvm::errs());
+                    std::cout << std::endl;
+                    
+                    SEMANTIC_ERROR("Type mismatch when storing iterator value for '" + varName + "'", getLocation());
+                    generator.setContextObject(oldContext);
+                    if (letContext) delete letContext;
+                    return;
                 }
+            }
+            generator.getBuilder()->CreateStore(val, globalIter);
+            
+            if (auto* vectorExpr = dynamic_cast<VectorExpression*>(decl.second)) {
+                if (!vectorExpr->getIsGenerator()) {
+                    std::vector<double> vectorValues;
+                    for (auto* elem : vectorExpr->getElements()) {
+                        if (auto* numberExpr = dynamic_cast<Number*>(elem)) {
+                            double value = numberExpr->getValue();
+                            vectorValues.push_back(value);
+                        }
+                    }
+                    if (!vectorValues.empty()) {
+                        generator.storeVectorDataForIterator(varName, vectorValues);
+                    }
+                }
+            } else if (auto* varExpr = dynamic_cast<Variable*>(decl.second)) {
+                std::string sourceVarName = varExpr->getName();
                 
-                // 4. NOW implement the iterator functions (after the global is created and value stored)
-                generator.implementIteratorFunctions(varName);
-                
-                // 5. Store the global pointer as the named value for this iterator
-                generator.setNamedValue(varName, globalIter);
-            } else {
-                // Para variables normales, crear alloca local
-                // For object types, preserve the runtime type information by storing as i8* (generic pointer)
-                // but keep track of the actual runtime type
-                llvm::Type* varType = val->getType(); // Use the type of the value
-                std::string semanticTypeName; // Track the semantic type name
-                
-                // If this is a runtime object type (pointer to struct with runtime type info),
-                // store it as i8* to preserve polymorphism while keeping runtime type info
-                if (varType->isPointerTy()) {
-                    llvm::Type* pointedType = varType->getPointerElementType();
-                    if (pointedType->isStructTy()) {
-                        llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
-                        std::string typeName = structType->getName().str();
-                        if (typeName.find("runtime.") == 0) {
-                            // Extract the semantic type name (remove "runtime." prefix)
-                            semanticTypeName = typeName.substr(8);
-                            // This is a runtime object, store as i8* to preserve polymorphism
-                            varType = llvm::Type::getInt8PtrTy(generator.getContext());
-                            // Cast the value to i8* for storage
-                            val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
-                        } else if (typeName.find("struct.") == 0) {
-                            // Extract the semantic type name (remove "struct." prefix)
-                            semanticTypeName = typeName.substr(7);
-                        } else {
-                            semanticTypeName = typeName;
+                if (generator.hasVectorDataForIterator(sourceVarName)) {
+                    std::vector<double> sourceVectorData = generator.getVectorDataForIterator(sourceVarName);
+                    for (double val : sourceVectorData) {
+                        std::cout << val << " ";
+                    }
+                    std::cout << std::endl;
+                    generator.storeVectorDataForIterator(varName, sourceVectorData);
+                } else {
+                    llvm::Value* sourceVar = generator.getNamedValue(sourceVarName);
+                    if (sourceVar) {
+                        auto vectorDataMap = generator.getAllVectorData();
+                        for (const auto& pair : vectorDataMap) {
+                            if (pair.first.find(sourceVarName) != std::string::npos || 
+                                pair.first == sourceVarName) {
+                                for (int val : pair.second) {
+                                    std::cout << val << " ";
+                                }
+                                std::cout << std::endl;
+                                generator.storeVectorDataForIterator(varName, pair.second);
+                                break;
+                            }
                         }
                     }
                 }
-
-                llvm::Function* func = generator.getBuilder()->GetInsertBlock()->getParent();
-                llvm::IRBuilder<> tmpBuilder(&func->getEntryBlock(), func->getEntryBlock().begin());
-                llvm::AllocaInst* alloca = tmpBuilder.CreateAlloca(varType, nullptr, varName);
-
-                generator.getBuilder()->CreateStore(val, alloca);
-                generator.setNamedValue(varName, alloca);
-                
-                // Store the semantic type name if we have one
-                if (!semanticTypeName.empty()) {
-                    // Store in both the current context and the old (global) context
-                    generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
-                    if (oldContext) {
-                        oldContext->setVariableTypeName(varName, semanticTypeName);
+            }
+            
+            generator.implementIteratorFunctions(varName);
+            
+            generator.setNamedValue(varName, globalIter);
+        } else {
+            llvm::Type* varType = val->getType();
+            std::string semanticTypeName;
+            
+            if (varType->isPointerTy()) {
+                llvm::Type* pointedType = varType->getPointerElementType();
+                if (pointedType->isStructTy()) {
+                    llvm::StructType* structType = llvm::cast<llvm::StructType>(pointedType);
+                    std::string typeName = structType->getName().str();
+                    if (typeName.find("runtime.") == 0) {
+                        semanticTypeName = typeName.substr(8);
+                        varType = llvm::Type::getInt8PtrTy(generator.getContext());
+                        val = generator.getBuilder()->CreateBitCast(val, varType, varName + "_cast");
+                    } else if (typeName.find("struct.") == 0) {
+                        semanticTypeName = typeName.substr(7);
+                    } else {
+                        semanticTypeName = typeName;
                     }
-                    std::cout << "[DEBUG] LetIn::codegen - Stored semantic type '" << semanticTypeName << "' for variable '" << varName << "' (legacy)" << std::endl;
                 }
             }
+
+            llvm::Function* func = generator.getBuilder()->GetInsertBlock()->getParent();
+            llvm::IRBuilder<> tmpBuilder(&func->getEntryBlock(), func->getEntryBlock().begin());
+            llvm::AllocaInst* alloca = tmpBuilder.CreateAlloca(varType, nullptr, varName);
+
+            generator.getBuilder()->CreateStore(val, alloca);
+            generator.setNamedValue(varName, alloca);
+            
+            if (!semanticTypeName.empty()) {
+                generator.getContextObject()->setVariableTypeName(varName, semanticTypeName);
+                if (oldContext) {
+                    oldContext->setVariableTypeName(varName, semanticTypeName);
+                }
+                std::cout << "[DEBUG] LetIn::codegen - Stored semantic type '" << semanticTypeName << "' for variable '" << varName << "' (legacy)" << std::endl;
+            }
         }
+    }
+}
+
+llvm::Value* LetIn::codegen(CodeGenerator& generator) {
+    IContext* oldContext = generator.getContextObject();
+    IContext* letContext = oldContext ? oldContext->createChildContext() : nullptr;
+    generator.setContextObject(letContext);
+
+    std::map<std::string, llvm::Value*> oldBindings;
+    std::vector<std::string> declaredVars;
+
+    if (useTypedDecls) {
+        codegen_typed(generator, letContext, oldBindings, declaredVars);
+    } else {
+        codegen_untyped(generator, letContext, oldBindings, declaredVars);
     }
 
     llvm::Value* bodyVal = nullptr;
@@ -929,18 +809,13 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
         bodyVal = expr->codegen(generator);
     }
     
-    // Si el cuerpo no devolvió un valor significativo o es un bucle for/while
-    // intentamos devolver el valor de una de las variables declaradas
     if (!bodyVal || bodyVal->getType()->isVoidTy() || 
         llvm::isa<llvm::Constant>(bodyVal)) {
         
-        // Primero, buscar variables que parezcan acumuladores (no iteradores ni resultados temporales)
         for (const auto& varName : declaredVars) {
-            // Evitar iteradores y variables temporales
             if (varName.rfind("__iter_", 0) == 0) continue;
             if (varName.rfind("__result_", 0) == 0) continue;
             
-            // Nombres comunes para acumuladores
             if (varName == "result" || varName == "sum" || varName == "acc" || 
                 varName == "factorial" || varName == "f" || varName == "total") {
                 llvm::Value* var = generator.getNamedValue(varName);
@@ -957,10 +832,8 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
             }
         }
         
-        // Si no encontramos un acumulador por nombre, usar la primera variable no iterador
         if (!bodyVal) {
             for (const auto& varName : declaredVars) {
-                // Evitar iteradores
                 if (varName.rfind("__iter_", 0) == 0) continue;
                 if (varName.rfind("__result_", 0) == 0) continue;
                 
@@ -979,7 +852,6 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
         }
     }
 
-    // Restore old bindings based on declaration type
     if (useTypedDecls) {
         for (const auto& binding : typedDecls) {
             const std::string& varName = binding.name;
@@ -1003,7 +875,6 @@ llvm::Value* LetIn::codegen(CodeGenerator& generator) {
     generator.setContextObject(oldContext);
     if (letContext) delete letContext;
 
-    // Si aún no tenemos un valor, devolver un valor por defecto
     if (!bodyVal) {
         bodyVal = llvm::ConstantFP::get(llvm::Type::getFloatTy(generator.getContext()), 0.0f);
         std::cout << "[LOG] LetIn::codegen, no suitable return value found, returning default 0.0\n";

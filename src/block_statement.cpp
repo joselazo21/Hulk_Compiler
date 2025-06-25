@@ -188,9 +188,33 @@ Expression* BlockStatement::getLastExpression() const {
             return nullptr;
         }
         
+        // For IfStatement, we can't safely return it as an Expression
+        // Instead, we'll return nullptr and let the caller handle this case
+        if (dynamic_cast<IfStatement*>(stmt)) {
+            // IfStatements can't be treated as expressions in this context
+            // The type checker should handle function return type validation differently
+            return nullptr;
+        }
+        
         // For other statement types, we can't extract an expression
         // This might need to be extended based on your language's semantics
     }
     
     return nullptr; // No expression found
+}
+
+Statement* BlockStatement::getLastStatement() const {
+    // Find the last non-function-declaration statement in the block
+    for (auto it = statements.rbegin(); it != statements.rend(); ++it) {
+        Statement* stmt = *it;
+        
+        // Skip function declarations as they don't contribute to the return value
+        if (dynamic_cast<FunctionDeclaration*>(stmt)) {
+            continue;
+        }
+        
+        return stmt;
+    }
+    
+    return nullptr; // No statement found
 }
