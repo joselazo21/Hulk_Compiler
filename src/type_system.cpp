@@ -40,6 +40,11 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
         return registry.getStringType();
     }
     
+    // Boolean literals
+    if (dynamic_cast<Boolean*>(expr)) {
+        return registry.getBooleanType();
+    }
+    
     // Variables
     if (auto variable = dynamic_cast<Variable*>(expr)) {
         // First check if the variable has a semantic type name stored in context
@@ -91,6 +96,24 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
         }
         
         return nullptr; // Variable not found
+    }
+    
+    // Self expressions
+    if (dynamic_cast<SelfExpression*>(expr)) {
+        // Get the current type being processed from context
+        if (context) {
+            std::string currentType = context->getCurrentType();
+            if (!currentType.empty()) {
+                std::cout << "[DEBUG] TypeChecker::inferType - SelfExpression current type: " << currentType << std::endl;
+                const Type* selfType = registry.getType(currentType);
+                if (selfType) {
+                    return selfType;
+                }
+                // If not in registry, try to create it dynamically
+                return registry.getType(currentType);
+            }
+        }
+        return nullptr; // No current type context
     }
     
     // Unary operations
@@ -232,8 +255,12 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     
     // Member access (e.g., self.x, obj.field)
     if (auto memberAccess = dynamic_cast<MemberAccess*>(expr)) {
+        std::cout << "[DEBUG] TypeChecker::inferType - Processing MemberAccess: " << memberAccess->getMember() << std::endl;
+        
         // Get the type of the object (left side of the dot)
         const Type* objectType = inferType(memberAccess->getObject(), context);
+        std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess object type: " << (objectType ? objectType->toString() : "null") << std::endl;
+        
         if (objectType) {
             // If it's a user-defined type, look up the field type
             if (auto userType = dynamic_cast<const UserDefinedType*>(objectType)) {
@@ -245,16 +272,35 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
             
             // For custom types, we need to infer field types based on the type definition
             std::string typeName = objectType->toString();
+            std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess looking for type definition: " << typeName << std::endl;
+            
             if (context) {
                 TypeDefinition* typeDef = context->getTypeDefinition(typeName);
                 if (typeDef) {
+                    std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess found type definition for: " << typeName << std::endl;
+                    
                     // Get the fields from the type definition
                     const auto& fields = typeDef->getFields();
                     std::string memberName = memberAccess->getMember();
                     
+                    std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess searching for field: " << memberName << " in " << fields.size() << " fields" << std::endl;
+                    
                     // Look for the field in the type definition
                     for (const auto& field : fields) {
-                        if (field.first == memberName) {
+                        std::string fieldName = field.first;
+                        std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess checking field: '" << fieldName << "'" << std::endl;
+                        
+                        // Extract the actual field name (remove type annotation if present)
+                        size_t colonPos = fieldName.find(':');
+                        if (colonPos != std::string::npos) {
+                            fieldName = fieldName.substr(0, colonPos);
+                            // Remove any trailing whitespace
+                            fieldName.erase(fieldName.find_last_not_of(" \t") + 1);
+                            std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess extracted field name: '" << fieldName << "'" << std::endl;
+                        }
+                        
+                        if (fieldName == memberName) {
+                            std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess found matching field: " << fieldName << std::endl;
                             // Found the field, now infer its type from the initialization expression
                             Expression* initExpr = field.second;
                             if (initExpr) {
@@ -268,7 +314,38 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
                                     return fieldType;
                                 }
                             }
-                            // If no initialization expression, assume Number (common default)
+                            
+                            // Check if field has type annotation
+                            std::string originalFieldName = field.first;
+                            colonPos = originalFieldName.find(':');
+                            if (colonPos != std::string::npos) {
+                                std::string declaredType = originalFieldName.substr(colonPos + 1);
+                                // Remove any leading/trailing whitespace
+                                declaredType.erase(0, declaredType.find_first_not_of(" \t"));
+                                declaredType.erase(declaredType.find_last_not_of(" \t") + 1);
+                                
+                                std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess found type annotation: '" << declaredType << "'" << std::endl;
+                                
+                                if (declaredType == "String") {
+                                    std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess returning String type from annotation" << std::endl;
+                                    return registry.getStringType();
+                                } else if (declaredType == "Number") {
+                                    std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess returning Number type from annotation" << std::endl;
+                                    return registry.getNumberType();
+                                } else if (declaredType == "Boolean") {
+                                    std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess returning Boolean type from annotation" << std::endl;
+                                    return registry.getBooleanType();
+                                } else {
+                                    // For custom types
+                                    const Type* customType = registry.getType(declaredType);
+                                    if (customType) {
+                                        std::cout << "[DEBUG] TypeChecker::inferType - MemberAccess returning custom type from annotation: " << declaredType << std::endl;
+                                        return customType;
+                                    }
+                                }
+                            }
+                            
+                            // If no initialization expression and no type annotation, assume Number (common default)
                             return registry.getNumberType();
                         }
                     }
@@ -276,8 +353,7 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
             }
         }
         
-        // For now, assume fields are Number type (based on x = 0, y = 0 initializers)
-        // This is a fallback until we have proper field type tracking
+        // Default fallback to Number type
         return registry.getNumberType();
     }
     
@@ -366,97 +442,97 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
     // Let-in expressions
     if (auto letIn = dynamic_cast<LetIn*>(expr)) {
         // The type of a let-in expression is the type of its body
-
         Expression* inExpr = letIn->getInExpression();
-
+        
+        // If the in-expression is a block expression, we need to check if it actually returns a value
+        if (auto blockExpr = dynamic_cast<BlockExpression*>(inExpr)) {
+            const Type* resultType = inferType(blockExpr, context);
+            // If the block only contains statements that don't return values (like for loops with only side effects),
+            // the let-in expression should return void
+            return resultType;
+        }
+        
         const Type* resultType = inferType(inExpr, context);
-
         return resultType;
     }
     
     // Block expressions
     if (auto block = dynamic_cast<BlockExpression*>(expr)) {
         // The type of a block is the type of its last statement
-
         const auto& statements = block->getStatements();
 
         if (!statements.empty()) {
             // Check from the last statement backwards
             for (auto it = statements.rbegin(); it != statements.rend(); ++it) {
                 Statement* stmt = *it;
-
                 
                 // If it's an expression statement, return its type
                 if (auto exprStmt = dynamic_cast<ExpressionStatement*>(stmt)) {
-
                     const Type* resultType = inferType(exprStmt->getExpression(), context);
-
                     return resultType;
                 }
                 
                 // Skip function declarations as they don't contribute to the return value
                 if (dynamic_cast<FunctionDeclaration*>(stmt)) {
-
                     continue;
                 }
                 
-                // For ForStatement, analyze its body to determine return type
+                // For ForStatement, check if it produces a value
                 if (auto forStmt = dynamic_cast<ForStatement*>(stmt)) {
-
                     // Get the last expression from the for loop body
                     BlockStatement* forBody = forStmt->getBody();
                     if (forBody) {
-
                         Expression* lastExpr = forBody->getLastExpression();
                         if (lastExpr) {
-
+                            // Check if the last expression is just a print or assignment (side effects only)
+                            if (dynamic_cast<Print*>(lastExpr) || dynamic_cast<AssignmentExpression*>(lastExpr)) {
+                                // For loops with only side effects don't return a value
+                                continue;
+                            }
                             const Type* resultType = inferType(lastExpr, context);
-
                             return resultType;
-                        } else {
-
                         }
-                    } else {
-
                     }
-                    // If no expression found in for body, continue looking
+                    // If no meaningful expression found in for body, this for loop doesn't return a value
                     continue;
                 }
                 
-                // For WhileStatement, analyze its body to determine return type
+                // For WhileStatement, check if it produces a value
                 if (auto whileStmt = dynamic_cast<WhileStatement*>(stmt)) {
-
                     // Get the last expression from the while loop body
                     BlockStatement* whileBody = whileStmt->getBody();
                     if (whileBody) {
-
                         Expression* lastExpr = whileBody->getLastExpression();
                         if (lastExpr) {
-
+                            // Check if the last expression is just a print or assignment (side effects only)
+                            if (dynamic_cast<Print*>(lastExpr) || dynamic_cast<AssignmentExpression*>(lastExpr)) {
+                                // While loops with only side effects don't return a value
+                                continue;
+                            }
                             const Type* resultType = inferType(lastExpr, context);
-
                             return resultType;
-                        } else {
-
                         }
-                    } else {
-
                     }
-                    // If no expression found in while body, continue looking
+                    // If no meaningful expression found in while body, this while loop doesn't return a value
                     continue;
                 }
                 
-                // Let's check what type of statement this actually is
+                // For Assignment statements, they don't contribute to return value (side effects only)
                 if (dynamic_cast<Assignment*>(stmt)) {
-
-                } else if (dynamic_cast<IfStatement*>(stmt)) {
-
-                } else if (dynamic_cast<WhileStatement*>(stmt)) {
-
-                } else if (dynamic_cast<ReturnStatement*>(stmt)) {
-
-                } else {
-
+                    continue;
+                }
+                
+                // For IfStatement, we can't safely return it as an Expression
+                // Instead, we'll return nullptr and let the caller handle this case
+                if (dynamic_cast<IfStatement*>(stmt)) {
+                    // IfStatements can't be treated as expressions in this context
+                    // The type checker should handle function return type validation differently
+                    continue;
+                }
+                
+                // For ReturnStatement, we should handle this differently
+                if (dynamic_cast<ReturnStatement*>(stmt)) {
+                    continue;
                 }
 
                 // For other statement types that don't contribute to return value
@@ -464,6 +540,7 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
             }
         }
 
+        // If we reach here, the block contains only statements that don't return values
         return registry.getVoidType();
     }
     
@@ -490,6 +567,28 @@ const Type* TypeChecker::inferType(Expression* expr, IContext* context) {
         // For now, we'll assume it returns String type since it's used in string concatenation
         // In a more sophisticated implementation, we'd look up the parent method's return type
         return registry.getStringType();
+    }
+    
+    // While expressions
+    if (auto whileExpr = dynamic_cast<WhileExpression*>(expr)) {
+        std::cout << "[DEBUG] TypeChecker::inferType - Processing WhileExpression" << std::endl;
+        
+        // A while expression returns the type of its body's last expression
+        BlockExpression* whileBody = whileExpr->getBody();
+        if (whileBody) {
+            std::cout << "[DEBUG] TypeChecker::inferType - WhileExpression has body, inferring body type" << std::endl;
+            const Type* bodyType = inferType(whileBody, context);
+            std::cout << "[DEBUG] TypeChecker::inferType - WhileExpression body type: " << (bodyType ? bodyType->toString() : "null") << std::endl;
+            
+            if (bodyType) {
+                // Return the type of the body's last expression
+                return bodyType;
+            }
+        }
+        
+        std::cout << "[DEBUG] TypeChecker::inferType - WhileExpression defaulting to Number" << std::endl;
+        // If we can't determine the body type, default to Number (common case for loops with assignments)
+        return registry.getNumberType();
     }
     
     // Default: unknown type

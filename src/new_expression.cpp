@@ -265,6 +265,12 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
         return nullptr;
     }
     
+    // Register the type if it hasn't been registered yet
+    TypeDefinition* typeDef = globalContext->getTypeDefinition(typeName);
+    if (typeDef) {
+        typeDef->registerType(generator);
+    }
+    
     llvm::StructType* structType = globalContext->getType(typeName);
 
     if (!structType) {
@@ -360,17 +366,6 @@ llvm::Value* NewExpression::codegen(CodeGenerator& generator) {
     llvm::Value* objectTypeInfoPtr = builder->CreateStructGEP(runtimeStructType, objectPtr, 0, "object.typeinfo.ptr");
     builder->CreateStore(typeInfoPtr, objectTypeInfoPtr);
 
-    // --- NEW LOGIC: handle parent arguments ---
-    // We need to get the TypeDefinition AST node to access parentArgs.
-    // We'll use a helper method on the context to get the parent argument expressions.
-    // For now, we assume the context has a method getTypeDefinition(typeName) that returns the TypeDefinition*.
-    // If not, you need to add this to your context.
-
-    // Get the TypeDefinition AST node for this type
-    TypeDefinition* typeDef = nullptr;
-    if (globalContext) {
-        typeDef = globalContext->getTypeDefinition(typeName);
-    }
     std::vector<Expression*> parentArgs;
     if (typeDef && parentType != "Object") {
         parentArgs = typeDef->getParentArgs();

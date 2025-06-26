@@ -435,3 +435,8 @@ std::string Context::getCurrentType() {
     }
     return parent ? parent->getCurrentType() : "";
 }
+
+// Get all type definitions
+const std::map<std::string, TypeDefinition*>& Context::getTypeDefinitions() const {
+    return typeDefinitions;
+}

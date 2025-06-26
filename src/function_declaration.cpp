@@ -162,6 +162,47 @@ bool FunctionDeclaration::Validate(IContext* context) {
             actualReturnType = checker.inferIfStatementType(ifStmt, functionContext.get());
         } else {
             std::cout << "[DEBUG] Last statement is not an IfStatement" << std::endl;
+            
+            // Check if the function body contains only statements that don't return values
+            // In this case, the function should return void
+            bool hasOnlyVoidStatements = true;
+            const auto& statements = body->getStatements();
+            
+            for (Statement* stmt : statements) {
+                // Skip function declarations
+                if (dynamic_cast<FunctionDeclaration*>(stmt)) {
+                    continue;
+                }
+                
+                // Check if it's a statement that produces a value
+                if (auto exprStmt = dynamic_cast<ExpressionStatement*>(stmt)) {
+                    Expression* expr = exprStmt->getExpression();
+                    // Check if the expression is just a side effect (print, assignment)
+                    if (!dynamic_cast<Print*>(expr) && !dynamic_cast<AssignmentExpression*>(expr)) {
+                        hasOnlyVoidStatements = false;
+                        break;
+                    }
+                }
+                // For loops and while loops with only side effects are considered void
+                else if (dynamic_cast<ForStatement*>(stmt) || dynamic_cast<WhileStatement*>(stmt)) {
+                    // These are considered void unless they contain return expressions
+                    continue;
+                }
+                // Assignment statements are void
+                else if (dynamic_cast<Assignment*>(stmt)) {
+                    continue;
+                }
+                // Other statements might produce values
+                else {
+                    hasOnlyVoidStatements = false;
+                    break;
+                }
+            }
+            
+            if (hasOnlyVoidStatements) {
+                std::cout << "[DEBUG] Function body contains only void statements, inferring void return type" << std::endl;
+                actualReturnType = typeRegistry.getVoidType();
+            }
         }
     }
     

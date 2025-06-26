@@ -40,5 +40,4 @@ function bar(x:Number) : A {
 }
 
 print(bar(5).foo());
-print(bar(3).foo());
 print(bar(9).foo());

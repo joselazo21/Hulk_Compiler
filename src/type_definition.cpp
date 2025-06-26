@@ -1,4 +1,5 @@
 #include "tree.hpp"
+#include "type_system.hpp"
 #include <iostream>
 
 TypeDefinition::TypeDefinition(const SourceLocation& loc, const std::string& name, 
@@ -8,7 +9,7 @@ TypeDefinition::TypeDefinition(const SourceLocation& loc, const std::string& nam
                                const std::string& parentType,
                                const std::vector<Expression*>& parentArgs)
     : Statement(loc), name(name), params(params), fields(fields), methods(methods), 
-      parentType(parentType), parentArgs(parentArgs), useTypedMethods(false) {}
+      parentType(parentType), parentArgs(parentArgs), useTypedMethods(false), useTypedParams(false) {}
 
 TypeDefinition::TypeDefinition(const SourceLocation& loc, const std::string& name, 
                                const std::vector<std::string>& params,
@@ -17,7 +18,21 @@ TypeDefinition::TypeDefinition(const SourceLocation& loc, const std::string& nam
                                const std::string& parentType,
                                const std::vector<Expression*>& parentArgs)
     : Statement(loc), name(name), params(params), fields(fields), typedMethods(typedMethods), 
-      parentType(parentType), parentArgs(parentArgs), useTypedMethods(true) {}
+      parentType(parentType), parentArgs(parentArgs), useTypedMethods(true), useTypedParams(false) {}
+
+TypeDefinition::TypeDefinition(const SourceLocation& loc, const std::string& name, 
+                               const std::vector<std::pair<std::string, std::string>>& typedParams,
+                               const std::vector<std::pair<std::string, Expression*>>& fields,
+                               const std::vector<std::pair<std::string, MethodInfo>>& typedMethods,
+                               const std::string& parentType,
+                               const std::vector<Expression*>& parentArgs)
+    : Statement(loc), name(name), typedParams(typedParams), fields(fields), typedMethods(typedMethods), 
+      parentType(parentType), parentArgs(parentArgs), useTypedMethods(true), useTypedParams(true) {
+    // Extract parameter names for backward compatibility
+    for (const auto& param : typedParams) {
+        params.push_back(param.first);
+    }
+}
 
 TypeDefinition::~TypeDefinition() {
     // Delete field expressions
@@ -101,20 +116,21 @@ void TypeDefinition::printNode(int depth) {
 }
 
 bool TypeDefinition::Validate(IContext* context) {
+    bool hasErrors = false;
+    
     // Check if parent type exists (unless it's Object)
     if (parentType != "Object") {
         // Check if parent type is registered in context
         // Use hasType to check if the type name is registered, regardless of struct being nullptr
         if (!context->hasType(parentType)) {
-            std::cerr << "Error: Parent type '" << parentType << "' of type '" << name 
-                      << "' is not defined. Make sure the parent type is declared." << std::endl;
-            return false;
+            SEMANTIC_ERROR("Parent type '" + parentType + "' of type '" + name + "' is not defined. Make sure the parent type is declared.", location);
+            hasErrors = true;
         }
         
         // Check if trying to inherit from builtin types
         if (parentType == "Number" || parentType == "String" || parentType == "Boolean") {
-            std::cerr << "Error: Cannot inherit from builtin type '" << parentType << "'" << std::endl;
-            return false;
+            SEMANTIC_ERROR("Cannot inherit from builtin type '" + parentType + "'", location);
+            hasErrors = true;
         }
     }
     
@@ -122,8 +138,17 @@ bool TypeDefinition::Validate(IContext* context) {
     IContext* typeContext = context->createChildContext();
     
     // Add constructor parameters to the type context
-    for (const auto& param : params) {
-        typeContext->addVariable(param);
+    if (useTypedParams) {
+        // Use typed parameters with their type information
+        for (const auto& param : typedParams) {
+            typeContext->addVariable(param.first); // Add variable to context
+            typeContext->setVariableTypeName(param.first, param.second); // Set its type
+        }
+    } else {
+        // Legacy: add parameters without type information (defaults to Number)
+        for (const auto& param : params) {
+            typeContext->addVariable(param);
+        }
     }
     
     // Add 'self' to the type context
@@ -135,20 +160,66 @@ bool TypeDefinition::Validate(IContext* context) {
     // Validate parent arguments if any
     for (const auto& arg : parentArgs) {
         if (arg && !arg->Validate(typeContext)) {
-            delete typeContext;
-            return false;
+            hasErrors = true;
         }
     }
     
-    // Validate field initializers with the type context
+    // Create type checker for semantic validation
+    TypeRegistry typeRegistry(context);
+    TypeChecker typeChecker(typeRegistry);
+    
+    // Validate field initializers with type checking
     for (const auto& field : fields) {
         if (field.second && !field.second->Validate(typeContext)) {
-            delete typeContext;
-            return false;
+            hasErrors = true;
+            continue;
+        }
+        
+        // Extract field name and type annotation
+        std::string fieldName = field.first;
+        std::string declaredType = "Number"; // Default type
+        
+        // Check if field name contains type annotation (e.g., "count:Number")
+        size_t colonPos = fieldName.find(':');
+        if (colonPos != std::string::npos) {
+            declaredType = fieldName.substr(colonPos + 1);
+            fieldName = fieldName.substr(0, colonPos);
+            // Remove any leading/trailing whitespace
+            declaredType.erase(0, declaredType.find_first_not_of(" \t"));
+            declaredType.erase(declaredType.find_last_not_of(" \t") + 1);
+            fieldName.erase(fieldName.find_last_not_of(" \t") + 1);
+        }
+        
+        // Check if the field initializer type matches the declared type
+        if (field.second) {
+            const Type* actualType = typeChecker.inferType(field.second, typeContext);
+            if (actualType) {
+                std::string actualTypeName = actualType->toString();
+                
+                // Check type compatibility
+                if (declaredType != actualTypeName) {
+                    // Special case: allow Number to String conversion for literals
+                    if (declaredType == "String" && actualTypeName == "Number") {
+                        // This might be acceptable in some contexts, but for strict typing, it's an error
+                        SEMANTIC_ERROR("Type mismatch in field '" + fieldName + "': declared as '" + declaredType + "' but initialized with '" + actualTypeName + "'", location);
+                        hasErrors = true;
+                    } else if (declaredType == "Number" && actualTypeName == "String") {
+                        SEMANTIC_ERROR("Type mismatch in field '" + fieldName + "': declared as '" + declaredType + "' but initialized with '" + actualTypeName + "'", location);
+                        hasErrors = true;
+                    } else if (declaredType != actualTypeName) {
+                        // Check if types are compatible through inheritance
+                        const Type* declaredTypeObj = typeRegistry.getType(declaredType);
+                        if (!declaredTypeObj || !typeChecker.areTypesCompatibleWithInheritance(declaredTypeObj, actualType, context)) {
+                            SEMANTIC_ERROR("Type mismatch in field '" + fieldName + "': declared as '" + declaredType + "' but initialized with '" + actualTypeName + "'", location);
+                            hasErrors = true;
+                        }
+                    }
+                }
+            }
         }
     }
     
-    // Validate method bodies
+    // Validate method bodies with return type checking
     if (useTypedMethods) {
         for (const auto& method : typedMethods) {
             // Create new context for method with parameters
@@ -166,10 +237,27 @@ bool TypeDefinition::Validate(IContext* context) {
             }
             
             if (method.second.body && !method.second.body->Validate(methodContext)) {
-                delete methodContext;
-                delete typeContext;
-                return false;
+                hasErrors = true;
             }
+            
+            // Check return type compatibility
+            if (method.second.body && !method.second.returnType.empty()) {
+                const Type* actualReturnType = typeChecker.inferType(method.second.body, methodContext);
+                if (actualReturnType) {
+                    std::string actualTypeName = actualReturnType->toString();
+                    std::string declaredReturnType = method.second.returnType;
+                    
+                    if (declaredReturnType != actualTypeName) {
+                        // Check if types are compatible through inheritance
+                        const Type* declaredTypeObj = typeRegistry.getType(declaredReturnType);
+                        if (!declaredTypeObj || !typeChecker.areTypesCompatibleWithInheritance(declaredTypeObj, actualReturnType, context)) {
+                            SEMANTIC_ERROR("Method '" + method.first + "' return type mismatch: declared as '" + declaredReturnType + "' but returns '" + actualTypeName + "'", location);
+                            hasErrors = true;
+                        }
+                    }
+                }
+            }
+            
             delete methodContext;
         }
     } else {
@@ -189,16 +277,15 @@ bool TypeDefinition::Validate(IContext* context) {
             }
             
             if (method.second.second && !method.second.second->Validate(methodContext)) {
-                delete methodContext;
-                delete typeContext;
-                return false;
+                hasErrors = true;
             }
+            
             delete methodContext;
         }
     }
     
     delete typeContext;
-    return true;
+    return !hasErrors;
 }
 
 llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
@@ -207,6 +294,9 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
     // Get the LLVM context
     llvm::LLVMContext& context = generator.getContext();
     llvm::Module* module = generator.getModule();
+    
+    // Note: Type registration will be done during executable code generation
+    // when the builder is properly set up
     
     // Create a struct type for this class
     std::vector<llvm::Type*> fieldTypes;
@@ -584,4 +674,152 @@ llvm::Value* TypeDefinition::codegen(CodeGenerator& generator) {
     
     // Return null since type definitions don't produce a value
     return nullptr;
+}
+
+void TypeDefinition::registerType(CodeGenerator& generator) {
+    // Check if type is already registered to avoid duplicate registration
+    IContext* currentContext = generator.getContextObject();
+    if (currentContext && currentContext->hasType(name)) {
+        return; // Already registered
+    }
+    
+    std::cout << "Registering type: " << name << std::endl;
+    
+    llvm::LLVMContext& context = generator.getContext();
+    llvm::Module* module = generator.getModule();
+    llvm::IRBuilder<>* builder = generator.getBuilder();
+    
+    // Create TypeInfo struct type if it doesn't exist
+    llvm::StructType* typeInfoType = llvm::StructType::getTypeByName(context, "struct.TypeInfo");
+    if (!typeInfoType) {
+        std::vector<llvm::Type*> typeInfoFields;
+        typeInfoFields.push_back(llvm::Type::getInt8PtrTy(context)); // type_name
+        typeInfoFields.push_back(llvm::Type::getInt8PtrTy(context)); // parent_type_name
+        typeInfoType = llvm::StructType::create(context, typeInfoFields, "struct.TypeInfo");
+    }
+    
+    // Create global TypeInfo instance for this type
+    std::string typeInfoGlobalName = "typeinfo_" + name;
+    
+    // Check if global already exists
+    llvm::GlobalVariable* existingGlobal = module->getNamedGlobal(typeInfoGlobalName);
+    if (existingGlobal) {
+        return; // Already registered
+    }
+    
+    // Create the TypeInfo constant
+    std::vector<llvm::Constant*> typeInfoValues;
+    
+    // Type name string
+    llvm::Constant* typeNameStr = builder->CreateGlobalStringPtr(name, "typename_" + name);
+    typeInfoValues.push_back(typeNameStr);
+    
+    // Parent type name string
+    llvm::Constant* parentTypeNameStr = builder->CreateGlobalStringPtr(parentType, "parentname_" + name);
+    typeInfoValues.push_back(parentTypeNameStr);
+    
+    // Create the constant struct
+    llvm::Constant* typeInfoConstant = llvm::ConstantStruct::get(typeInfoType, typeInfoValues);
+    
+    // Create global variable for the TypeInfo
+    new llvm::GlobalVariable(
+        *module,
+        typeInfoType,
+        true, // isConstant
+        llvm::GlobalValue::ExternalLinkage,
+        typeInfoConstant,
+        typeInfoGlobalName
+    );
+    
+    // Generate runtime type registration call
+    // Create or get the __hulk_register_type function
+    llvm::Function* registerTypeFunc = module->getFunction("__hulk_register_type");
+    if (!registerTypeFunc) {
+        // Create the function declaration
+        // void __hulk_register_type(const char* type_name, const char* parent_type_name)
+        llvm::FunctionType* funcType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(context),
+            {llvm::Type::getInt8PtrTy(context), llvm::Type::getInt8PtrTy(context)},
+            false
+        );
+        registerTypeFunc = llvm::Function::Create(
+            funcType,
+            llvm::Function::ExternalLinkage,
+            "__hulk_register_type",
+            module
+        );
+    }
+    
+    // Generate call to register this type at runtime
+    llvm::Constant* typeNameForCall = builder->CreateGlobalStringPtr(name, "regname_" + name);
+    llvm::Constant* parentTypeNameForCall = builder->CreateGlobalStringPtr(parentType, "regparent_" + name);
+    
+    // We need to generate this call in the main function or in a global constructor
+    // For now, let's add it to a global constructor that runs before main
+    
+    // Get or create the global constructor function
+    llvm::Function* globalCtorFunc = module->getFunction("__hulk_global_constructor");
+    if (!globalCtorFunc) {
+        llvm::FunctionType* ctorType = llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+        globalCtorFunc = llvm::Function::Create(
+            ctorType,
+            llvm::Function::InternalLinkage,
+            "__hulk_global_constructor",
+            module
+        );
+        
+        // Create the basic block for the constructor
+        llvm::BasicBlock* ctorBB = llvm::BasicBlock::Create(context, "entry", globalCtorFunc);
+        
+        // Add this constructor to the global constructors list
+        llvm::StructType* ctorStructType = llvm::StructType::get(
+            llvm::Type::getInt32Ty(context),  // priority
+            globalCtorFunc->getType(),        // function pointer
+            llvm::Type::getInt8PtrTy(context) // associated data (can be null)
+        );
+        
+        std::vector<llvm::Constant*> ctorElements;
+        ctorElements.push_back(llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 65535)); // priority
+        ctorElements.push_back(globalCtorFunc); // function
+        ctorElements.push_back(llvm::ConstantPointerNull::get(llvm::Type::getInt8PtrTy(context))); // data
+        
+        llvm::Constant* ctorStruct = llvm::ConstantStruct::get(ctorStructType, ctorElements);
+        
+        // Create the global constructors array
+        llvm::ArrayType* ctorArrayType = llvm::ArrayType::get(ctorStructType, 1);
+        std::vector<llvm::Constant*> ctorArray;
+        ctorArray.push_back(ctorStruct);
+        
+        new llvm::GlobalVariable(
+            *module,
+            ctorArrayType,
+            false, // not constant
+            llvm::GlobalValue::AppendingLinkage,
+            llvm::ConstantArray::get(ctorArrayType, ctorArray),
+            "llvm.global_ctors"
+        );
+        
+        // Set the insertion point to the constructor
+        builder->SetInsertPoint(ctorBB);
+    } else {
+        // Constructor already exists, find its entry block
+        llvm::BasicBlock& entryBB = globalCtorFunc->getEntryBlock();
+        // Find the last instruction (should be ret void) and insert before it
+        llvm::Instruction* lastInst = &entryBB.back();
+        if (llvm::isa<llvm::ReturnInst>(lastInst)) {
+            builder->SetInsertPoint(lastInst);
+        } else {
+            builder->SetInsertPoint(&entryBB);
+        }
+    }
+    
+    // Generate the call to register the type
+    builder->CreateCall(registerTypeFunc, {typeNameForCall, parentTypeNameForCall});
+    
+    // If this is the first type being registered, add the return instruction
+    if (!globalCtorFunc->getEntryBlock().getTerminator()) {
+        builder->CreateRetVoid();
+    }
+    
+    std::cout << "Successfully registered type: " << name << " with TypeInfo global: " << typeInfoGlobalName << std::endl;
 }

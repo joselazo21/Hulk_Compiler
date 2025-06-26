@@ -323,16 +323,11 @@ type_definition
             }
         }
         
-        // Convert typed parameters to simple parameter list for now
-        std::vector<std::string> params;
-        for (const auto& param : *$4) {
-            params.push_back(param.first);
-        }
-        
+        // Use typed parameters directly
         $$ = new TypeDefinition(
             SourceLocation(yylineno, @1.first_column),
             $2,
-            params,
+            *$4, // Pass typed parameters directly
             *fields,
             *typedMethods
         );
@@ -500,16 +495,11 @@ type_definition
             }
         }
         
-        // Convert typed parameters to simple parameter list for now
-        std::vector<std::string> params;
-        for (const auto& param : *$4) {
-            params.push_back(param.first);
-        }
-        
+        // Use typed parameters directly
         $$ = new TypeDefinition(
             SourceLocation(yylineno, @1.first_column),
             $2,
-            params,
+            *$4, // Pass typed parameters directly
             *fields,
             *typedMethods,
             $7  // parent type
@@ -666,6 +656,82 @@ member_list
         free($2);
         delete $7;
         delete $4;
+    }
+    | member_list ID '(' param_list ')' ':' type_name '{' statement_list '}' {
+        $$ = $1;
+        // Store method with block body and return type
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i];
+        }
+        signature += "):" + *$7;
+        // Convert statement list to block expression
+        auto blockExpr = new BlockExpression(SourceLocation(yylineno, @8.first_column), *$9);
+        $$->push_back(std::make_pair(signature, blockExpr));
+        free($2);
+        delete $7;
+        delete $4;
+        delete $9;
+    }
+    | member_list ID '(' typed_param_list ')' ':' type_name '{' statement_list '}' {
+        $$ = $1;
+        // Store method with typed parameters, block body and return type
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i].first;
+            if (!(*$4)[i].second.empty()) {
+                signature += ":" + (*$4)[i].second;
+            }
+        }
+        signature += "):" + *$7;
+        // Convert statement list to block expression
+        auto blockExpr = new BlockExpression(SourceLocation(yylineno, @8.first_column), *$9);
+        $$->push_back(std::make_pair(signature, blockExpr));
+        free($2);
+        delete $7;
+        delete $4;
+        delete $9;
+    }
+    | member_list ID '(' param_list ')' '{' statement_list '}' {
+        $$ = $1;
+        // Store method with block body (no explicit return type)
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i];
+        }
+        signature += ")";
+        // Convert statement list to block expression
+        auto blockExpr = new BlockExpression(SourceLocation(yylineno, @6.first_column), *$7);
+        $$->push_back(std::make_pair(signature, blockExpr));
+        free($2);
+        delete $4;
+        delete $7;
+    }
+    | member_list ID '(' typed_param_list ')' '{' statement_list '}' {
+        $$ = $1;
+        // Store method with typed parameters and block body (no explicit return type)
+        std::string signature = $2;
+        signature += "(";
+        for (size_t i = 0; i < $4->size(); i++) {
+            if (i > 0) signature += ",";
+            signature += (*$4)[i].first;
+            if (!(*$4)[i].second.empty()) {
+                signature += ":" + (*$4)[i].second;
+            }
+        }
+        signature += ")";
+        // Convert statement list to block expression
+        auto blockExpr = new BlockExpression(SourceLocation(yylineno, @6.first_column), *$7);
+        $$->push_back(std::make_pair(signature, blockExpr));
+        free($2);
+        delete $4;
+        delete $7;
     }
     ;
 
@@ -883,10 +949,9 @@ for_loop_expr
         auto getNextExpr = new FunctionCall(forLoc, iterName + ".next", {});
         auto whileStmt = new WhileStatement(forLoc, getNextExpr, whileBodyStmt);
         
-        // Create the final block that executes the while loop and returns a default value
-        auto defaultReturn = new Number(forLoc, 0.0);
-        auto outerLetBody = new BlockExpression(forLoc, 
-            { whileStmt, new ExpressionStatement(forLoc, defaultReturn) });
+        // Create the final block that executes the while loop
+        // Don't add a default return value - let the type system determine if this should be void
+        auto outerLetBody = new BlockExpression(forLoc, { whileStmt });
 
         // Create the let-in that initializes the iterator
         $$ = new LetIn(forLoc, { 

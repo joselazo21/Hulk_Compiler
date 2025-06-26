@@ -1,4 +1,5 @@
 #include "tree.hpp"
+#include "type_system.hpp"
 #include <sstream>
 #include <iostream>
 #include <error_handler.hpp>
@@ -31,15 +32,44 @@ void WhileExpression::printNode(int depth) {
 }
 
 bool WhileExpression::Validate(IContext* context) {
+    bool hasErrors = false;
+    
+    // First validate the condition expression itself
     if (!condition->Validate(context)) {
         SEMANTIC_ERROR("Error in while-expression condition", location);
-        return false;
+        hasErrors = true;
     }
+    
+    // Now check if the condition is of boolean type
+    TypeRegistry typeRegistry(context);
+    TypeChecker typeChecker(typeRegistry);
+    
+    const Type* conditionType = typeChecker.inferType(condition, context);
+    if (conditionType) {
+        const Type* booleanType = typeRegistry.getBooleanType();
+        
+        // Check if the condition type is compatible with boolean
+        if (!typeChecker.areTypesCompatible(booleanType, conditionType)) {
+            // Special case: allow numeric types that can be converted to boolean
+            const Type* numberType = typeRegistry.getNumberType();
+            if (!typeChecker.areTypesCompatible(numberType, conditionType)) {
+                SEMANTIC_ERROR("While condition must be of boolean type, got '" + 
+                             conditionType->toString() + "'", location);
+                hasErrors = true;
+            }
+        }
+    } else {
+        SEMANTIC_ERROR("Cannot determine type of while condition", location);
+        hasErrors = true;
+    }
+    
+    // Validate the body
     if (!body->Validate(context)) {
         SEMANTIC_ERROR("Error in while-expression body", location);
-        return false;
+        hasErrors = true;
     }
-    return true;
+    
+    return !hasErrors;
 }
 
 llvm::Value* WhileExpression::codegen(CodeGenerator& generator) {

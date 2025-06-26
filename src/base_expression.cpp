@@ -1,4 +1,5 @@
 #include "tree.hpp"
+#include <error_handler.hpp>
 #include <iostream>
 
 BaseExpression::BaseExpression(const SourceLocation& loc, const std::vector<Expression*>& args)
@@ -35,7 +36,21 @@ bool BaseExpression::Validate(IContext* context) {
             return false;
         }
     }
-    // TODO: Check if we're inside a method that can call base()
+    
+    // Check if we're inside a method that can call base()
+    std::string currentType = context->getCurrentType();
+    if (currentType.empty()) {
+        SEMANTIC_ERROR("base() can only be called from within a method", location);
+        return false;
+    }
+    
+    // Check if the current type has a parent (other than Object)
+    std::string parentType = context->getParentType(currentType);
+    if (parentType.empty() || parentType == "Object") {
+        SEMANTIC_ERROR("base() called in type '" + currentType + "' which has no parent type", location);
+        return false;
+    }
+    
     return true;
 }
 

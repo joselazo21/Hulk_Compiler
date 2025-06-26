@@ -1,5 +1,6 @@
 #include "../include/code_generator.hpp"
 #include "../include/tree.hpp"
+#include "../include/type_system.hpp"
 #include "print.h"
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/FileSystem.h>
@@ -255,6 +256,9 @@ bool CodeGenerator::generateCode(Node* root) {
 
     // 4. Paso 2: Generar código ejecutable dentro de main
     Builder->SetInsertPoint(entryBlock);
+
+    // Add type registration calls at the beginning of main
+    addTypeRegistrationCalls();
 
     pushScope();
 
@@ -1087,7 +1091,6 @@ void CodeGenerator::declareAndImplementRangeSizeMethod() {
     
     // Get the current and end values from the range struct
     llvm::Value* currentPtr = sizeBuilder.CreateStructGEP(rangeType, rangePtr, 0, "current.ptr");
-    llvm::Value* currentVal = sizeBuilder.CreateLoad(llvm::Type::getInt32Ty(*TheContext), currentPtr, "current");
     
     llvm::Value* endPtr = sizeBuilder.CreateStructGEP(rangeType, rangePtr, 1, "end.ptr");
     llvm::Value* endVal = sizeBuilder.CreateLoad(llvm::Type::getInt32Ty(*TheContext), endPtr, "end");
@@ -1102,6 +1105,68 @@ void CodeGenerator::declareAndImplementRangeSizeMethod() {
     // Register the method in the context
     if (contextObject) {
         contextObject->addMethod("range", "size", sizeMethod);
+    }
+}
+
+void CodeGenerator::addTypeRegistrationCalls() {
+    // Get or create the __hulk_register_type function
+    llvm::Function* registerTypeFunc = TheModule->getFunction("__hulk_register_type");
+    if (!registerTypeFunc) {
+        // Create the function declaration
+        llvm::FunctionType* funcType = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(*TheContext),
+            {llvm::Type::getInt8PtrTy(*TheContext), llvm::Type::getInt8PtrTy(*TheContext)},
+            false
+        );
+        registerTypeFunc = llvm::Function::Create(
+            funcType,
+            llvm::Function::ExternalLinkage,
+            "__hulk_register_type",
+            TheModule
+        );
+    }
+
+    // Register built-in types first
+    llvm::Value* objectStr = Builder->CreateGlobalStringPtr("Object");
+    llvm::Value* nullStr = Builder->CreateGlobalStringPtr("");
+    Builder->CreateCall(registerTypeFunc, {objectStr, nullStr});
+    
+    llvm::Value* numberStr = Builder->CreateGlobalStringPtr("Number");
+    Builder->CreateCall(registerTypeFunc, {numberStr, objectStr});
+    
+    llvm::Value* stringStr = Builder->CreateGlobalStringPtr("String");
+    Builder->CreateCall(registerTypeFunc, {stringStr, objectStr});
+    
+    llvm::Value* boolStr = Builder->CreateGlobalStringPtr("Boolean");
+    Builder->CreateCall(registerTypeFunc, {boolStr, objectStr});
+
+    // Register user-defined types by examining the context
+    if (contextObject) {
+        // Get all registered types from the context
+        auto* context = dynamic_cast<Context*>(contextObject);
+        if (context) {
+            // Get all type definitions
+            const auto& typeDefinitions = context->getTypeDefinitions();
+            
+            // Register each user-defined type
+            for (const auto& pair : typeDefinitions) {
+                const std::string& typeName = pair.first;
+                TypeDefinition* typeDef = pair.second;
+                
+                if (typeDef) {
+                    std::string parentType = typeDef->getParentType();
+                    
+                    // Create string constants for type name and parent type
+                    llvm::Value* typeNameStr = Builder->CreateGlobalStringPtr(typeName);
+                    llvm::Value* parentTypeStr = Builder->CreateGlobalStringPtr(parentType);
+                    
+                    // Call __hulk_register_type(typeName, parentType)
+                    Builder->CreateCall(registerTypeFunc, {typeNameStr, parentTypeStr});
+                    
+                    std::cout << "Registered type: " << typeName << " with parent: " << parentType << std::endl;
+                }
+            }
+        }
     }
 }
 

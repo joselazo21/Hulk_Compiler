@@ -167,10 +167,9 @@ Expression* BlockStatement::getLastExpression() const {
             return exprStmt->getExpression();
         }
         
-        // If it's a return statement, we don't have a direct expression to return
-        // (the return type checking should be handled elsewhere)
-        if (dynamic_cast<ReturnStatement*>(stmt)) {
-            return nullptr;
+        // If it's a return statement, return its expression for type checking
+        if (auto returnStmt = dynamic_cast<ReturnStatement*>(stmt)) {
+            return returnStmt->getValue();
         }
         
         // Skip function declarations as they don't contribute to the return value

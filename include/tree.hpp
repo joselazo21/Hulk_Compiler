@@ -258,6 +258,9 @@ public:
     // Current type tracking implementation
     void setCurrentType(const std::string& typeName) override;
     std::string getCurrentType() override;
+    
+    // Get all type definitions
+    const std::map<std::string, TypeDefinition*>& getTypeDefinitions() const;
 };
 
 // Implementation of the new type-related methods
@@ -554,6 +557,9 @@ public:
     bool Validate(IContext* context) override;
     llvm::Value* codegen(CodeGenerator& generator) override;
     ~ReturnStatement();
+    
+    // Getter method to access the return value expression
+    Expression* getValue() const { return value; }
 };
 
 // Structure to hold variable declaration with optional type annotation
@@ -668,12 +674,14 @@ class TypeDefinition : public Statement {
 private:
     std::string name;
     std::vector<std::string> params;
+    std::vector<std::pair<std::string, std::string>> typedParams; // Parameter name and type pairs
     std::vector<std::pair<std::string, Expression*>> fields;
     std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>> methods; // Legacy
     std::vector<std::pair<std::string, MethodInfo>> typedMethods; // New with return type annotations
     std::string parentType;
     std::vector<Expression*> parentArgs;
     bool useTypedMethods; // Flag to indicate which method format to use
+    bool useTypedParams; // Flag to indicate if typed parameters are used
 
 public:
     // Legacy constructor
@@ -692,6 +700,14 @@ public:
                    const std::string& parentType = "Object",
                    const std::vector<Expression*>& parentArgs = {});
     
+    // Constructor with typed parameters and typed methods
+    TypeDefinition(const SourceLocation& loc, const std::string& name, 
+                   const std::vector<std::pair<std::string, std::string>>& typedParams,
+                   const std::vector<std::pair<std::string, Expression*>>& fields,
+                   const std::vector<std::pair<std::string, MethodInfo>>& typedMethods,
+                   const std::string& parentType = "Object",
+                   const std::vector<Expression*>& parentArgs = {});
+    
     void printNode(int depth) override;
     bool Validate(IContext* context) override;
     llvm::Value* codegen(CodeGenerator& generator) override;
@@ -699,12 +715,17 @@ public:
     
     const std::string& getName() const { return name; }
     const std::vector<std::string>& getParams() const { return params; }
+    const std::vector<std::pair<std::string, std::string>>& getTypedParams() const { return typedParams; }
     const std::vector<std::pair<std::string, Expression*>>& getFields() const { return fields; }
     const std::vector<std::pair<std::string, std::pair<std::vector<std::string>, Expression*>>>& getMethods() const { return methods; }
     const std::vector<std::pair<std::string, MethodInfo>>& getTypedMethods() const { return typedMethods; }
     const std::string& getParentType() const { return parentType; }
     const std::vector<Expression*>& getParentArgs() const { return parentArgs; }
     bool getUseTypedMethods() const { return useTypedMethods; }
+    bool getUseTypedParams() const { return useTypedParams; }
+    
+    // Method to register type information during code generation
+    void registerType(CodeGenerator& generator);
 };
 
 // NewExpression class for object instantiation

@@ -130,4 +130,7 @@ public:
     std::string getCurrentLetInVariableName() const {
         return currentLetInVarName;
     }
+
+    // Add type registration calls to main function
+    void addTypeRegistrationCalls();
 };
